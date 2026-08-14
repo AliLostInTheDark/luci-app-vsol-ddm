@@ -1,14 +1,22 @@
 {
 	"luci-app-vsol-ddm": {
-		"description": "Grant access to VSOL V2802RH DDM diagnostic procedures",
+		"description": "Allow LuCI to read VSOL V2802RH DDM diagnostics and test connection",
 		"read": {
-			"uci": [ "vsol_ddm" ],
 			"ubus": {
-				"vsol_ddm": [ "get_status", "get_info", "test_connection" ]
-			}
+				"vsol_ddm": [
+					"get_status",
+					"get_info",
+					"test_connection"
+				]
+			},
+			"uci": [
+				"vsol_ddm"
+			]
 		},
 		"write": {
-			"uci": [ "vsol_ddm" ]
+			"uci": [
+				"vsol_ddm"
+			]
 		}
 	}
 }
