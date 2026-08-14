@@ -26,13 +26,13 @@ return view.extend({
 		var uciConfig = data[0];
 		var initialStatus = data[1] || {};
 		var pollInterval = parseInt(uci.get('vsol_ddm', 'main', 'poll_interval')) || 3;
+		// Unit system is managed exclusively via Settings (UCI)
 		self.unitSystem = uci.get('vsol_ddm', 'main', 'unit_system') || 'dual';
-
-		// Stored user preferences in localStorage
 		if (window.localStorage) {
-			var savedUnit = window.localStorage.getItem('vsol_unit_system');
-			if (savedUnit) self.unitSystem = savedUnit;
-			try { window.localStorage.removeItem('vsol_last_telemetry'); } catch(e) {}
+			try {
+				window.localStorage.removeItem('vsol_unit_system');
+				window.localStorage.removeItem('vsol_last_telemetry');
+			} catch(e) {}
 		}
 
 		var container = E('div', {
@@ -43,13 +43,6 @@ return view.extend({
 		var style = E('style', {},
 			' .hw-dashboard { display: flex; flex-wrap: wrap; align-items: stretch; gap: 20px; padding: 15px; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; width: 100%; max-width: 100%; overflow: hidden; color: var(--text-color, inherit); }' +
 			' .hw-dashboard * { box-sizing: border-box; }' +
-			' .hw-top-bar { width: 100%; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px; margin-bottom: 4px; padding-bottom: 12px; border-bottom: 1px solid var(--border-color, rgba(128,128,128,0.18)); }' +
-			' .hw-top-left { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }' +
-			' .hw-top-right { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }' +
-			' .hw-unit-group { display: inline-flex; border: 1px solid var(--border-color, rgba(128,128,128,0.25)); border-radius: 6px; overflow: hidden; background: var(--background-color-high, rgba(128,128,128,0.06)); }' +
-			' .hw-unit-btn { background: transparent; border: none; padding: 6px 13px; font-size: 0.78em; font-weight: 600; color: var(--text-color, inherit); opacity: 0.75; cursor: pointer; transition: all 0.2s ease; }' +
-			' .hw-unit-btn:hover { opacity: 1; background: var(--border-color, rgba(128,128,128,0.12)); }' +
-			' .hw-unit-btn.active { background: var(--primary, #00acc1); color: #ffffff !important; opacity: 1; font-weight: 700; }' +
 			' .hw-thermals-container { display: flex; flex-direction: row; width: 100%; height: 100%; }' +
 			' .hw-thermals-col { flex: 1; min-width: 0; }' +
 			' .hw-thermals-col-left { padding-right: 15px; }' +
@@ -88,119 +81,6 @@ return view.extend({
 		);
 
 		container.appendChild(style);
-
-		// Metric & Imperial Conversion Utilities
-		var toFahrenheit = function(c) {
-			return (c * 9.0 / 5.0) + 32.0;
-		};
-
-		var toMicrowatts = function(dbm) {
-			if (isNaN(dbm) || dbm <= -40) return 0;
-			return Math.pow(10, dbm / 10.0) * 1000.0; // In µW
-		};
-
-		var fmtTemp = function(c) {
-			if (isNaN(c)) return '--';
-			var f = toFahrenheit(c);
-			if (self.unitSystem === 'imperial') return f.toFixed(1) + ' °F';
-			if (self.unitSystem === 'dual') return c.toFixed(1) + ' °C / ' + f.toFixed(1) + ' °F';
-			return c.toFixed(1) + ' °C';
-		};
-
-		var fmtPower = function(dbm) {
-			if (isNaN(dbm) || dbm <= -35) {
-				return self.unitSystem === 'dual' ? 'Off / 0.00 µW' : (self.unitSystem === 'imperial' ? '0.00 µW' : 'Laser Inactive');
-			}
-			var uw = toMicrowatts(dbm);
-			var uwStr = uw < 1 ? uw.toFixed(2) + ' µW' : (uw >= 1000 ? (uw / 1000.0).toFixed(2) + ' mW' : uw.toFixed(1) + ' µW');
-			if (self.unitSystem === 'imperial') return uwStr;
-			if (self.unitSystem === 'dual') return dbm.toFixed(2) + ' dBm / ' + uwStr;
-			return dbm.toFixed(2) + ' dBm';
-		};
-
-		// Standard Uptime Formatter (e.g. 2d 14h 50m or 8h 22m)
-		var formatUptime = function(upRaw) {
-			if (!upRaw || upRaw === '--') return '--';
-			if (typeof upRaw === 'number' || /^\d+$/.test(String(upRaw).trim())) {
-				var sec = parseInt(upRaw);
-				var days = Math.floor(sec / 86400);
-				var hours = Math.floor((sec % 86400) / 3600);
-				var mins = Math.floor((sec % 3600) / 60);
-				var out = '';
-				if (days > 0) out += days + 'd ';
-				if (hours > 0 || days > 0) out += hours + 'h ';
-				out += mins + 'm';
-				return out || '0m';
-			}
-			// Handle "0 8:19:55" or "0 days, 8:19:55"
-			var m = String(upRaw).match(/(?:(\d+)\s*(?:days?)?,?\s*)?(\d+):(\d+)(?::(\d+))?/i);
-			if (m) {
-				var days = parseInt(m[1]) || 0;
-				var hours = parseInt(m[2]) || 0;
-				var mins = parseInt(m[3]) || 0;
-				var out = '';
-				if (days > 0) out += days + 'd ';
-				if (hours > 0 || days > 0) out += hours + 'h ';
-				out += mins + 'm';
-				return out || '0m';
-			}
-			return upRaw;
-		};
-
-		// Top Quick Bar (Unit Switcher + Target Badge)
-		var topBar = E('div', { class: 'hw-top-bar' }, [
-			E('div', { class: 'hw-top-left' }, [
-				E('span', { style: 'font-size: 0.85em; opacity: 0.75; font-weight: 600;' }, _('Units:')),
-				E('div', { class: 'hw-unit-group' }, [
-					E('button', {
-						id: 'btn-unit-dual',
-						class: 'hw-unit-btn' + (self.unitSystem === 'dual' ? ' active' : ''),
-						click: function() {
-							self.unitSystem = 'dual';
-							if (window.localStorage) window.localStorage.setItem('vsol_unit_system', 'dual');
-							updateUnitButtons();
-							if (self.lastData) updateDashboard(self.lastData);
-						}
-					}, _('Dual (Metric / Imperial)')),
-					E('button', {
-						id: 'btn-unit-metric',
-						class: 'hw-unit-btn' + (self.unitSystem === 'metric' ? ' active' : ''),
-						click: function() {
-							self.unitSystem = 'metric';
-							if (window.localStorage) window.localStorage.setItem('vsol_unit_system', 'metric');
-							updateUnitButtons();
-							if (self.lastData) updateDashboard(self.lastData);
-						}
-					}, _('Metric (°C, dBm)')),
-					E('button', {
-						id: 'btn-unit-imperial',
-						class: 'hw-unit-btn' + (self.unitSystem === 'imperial' ? ' active' : ''),
-						click: function() {
-							self.unitSystem = 'imperial';
-							if (window.localStorage) window.localStorage.setItem('vsol_unit_system', 'imperial');
-							updateUnitButtons();
-							if (self.lastData) updateDashboard(self.lastData);
-						}
-					}, _('Imperial (°F, µW)'))
-				])
-			]),
-			E('div', { class: 'hw-top-right' }, [
-				E('span', { style: 'font-size: 0.82em; opacity: 0.75; font-family: ui-monospace, monospace; font-weight: 600;' },
-					_('ONT: ') + (initialStatus.host || '192.168.100.1')
-				)
-			])
-		]);
-		container.appendChild(topBar);
-
-		var updateUnitButtons = function() {
-			['dual', 'metric', 'imperial'].forEach(function(u) {
-				var btn = document.getElementById('btn-unit-' + u);
-				if (btn) {
-					if (self.unitSystem === u) btn.classList.add('active');
-					else btn.classList.remove('active');
-				}
-			});
-		};
 
 		// Circular Dial Generator
 		var createDial = function(id, title) {
