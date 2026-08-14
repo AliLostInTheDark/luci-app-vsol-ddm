@@ -82,6 +82,63 @@ return view.extend({
 
 		container.appendChild(style);
 
+		// Metric & Imperial Conversion Utilities
+		var toFahrenheit = function(c) {
+			return (c * 9.0 / 5.0) + 32.0;
+		};
+
+		var toMicrowatts = function(dbm) {
+			if (isNaN(dbm) || dbm <= -40) return 0;
+			return Math.pow(10, dbm / 10.0) * 1000.0; // In µW
+		};
+
+		var fmtTemp = function(c) {
+			if (isNaN(c)) return '--';
+			var f = toFahrenheit(c);
+			if (self.unitSystem === 'imperial') return f.toFixed(1) + ' °F';
+			if (self.unitSystem === 'dual') return c.toFixed(1) + ' °C / ' + f.toFixed(1) + ' °F';
+			return c.toFixed(1) + ' °C';
+		};
+
+		var fmtPower = function(dbm) {
+			if (isNaN(dbm) || dbm <= -35) {
+				return self.unitSystem === 'dual' ? 'Off / 0.00 µW' : (self.unitSystem === 'imperial' ? '0.00 µW' : 'Laser Inactive');
+			}
+			var uw = toMicrowatts(dbm);
+			var uwStr = uw < 1 ? uw.toFixed(2) + ' µW' : (uw >= 1000 ? (uw / 1000.0).toFixed(2) + ' mW' : uw.toFixed(1) + ' µW');
+			if (self.unitSystem === 'imperial') return uwStr;
+			if (self.unitSystem === 'dual') return dbm.toFixed(2) + ' dBm / ' + uwStr;
+			return dbm.toFixed(2) + ' dBm';
+		};
+
+		// Standard Uptime Formatter (e.g. 2d 14h 50m or 8h 22m)
+		var formatUptime = function(upRaw) {
+			if (!upRaw || upRaw === '--') return '--';
+			if (typeof upRaw === 'number' || /^\d+$/.test(String(upRaw).trim())) {
+				var sec = parseInt(upRaw);
+				var days = Math.floor(sec / 86400);
+				var hours = Math.floor((sec % 86400) / 3600);
+				var mins = Math.floor((sec % 3600) / 60);
+				var out = '';
+				if (days > 0) out += days + 'd ';
+				if (hours > 0 || days > 0) out += hours + 'h ';
+				out += mins + 'm';
+				return out || '0m';
+			}
+			var m = String(upRaw).match(/(?:(\d+)\s*(?:days?)?,?\s*)?(\d+):(\d+)(?::(\d+))?/i);
+			if (m) {
+				var days = parseInt(m[1]) || 0;
+				var hours = parseInt(m[2]) || 0;
+				var mins = parseInt(m[3]) || 0;
+				var out = '';
+				if (days > 0) out += days + 'd ';
+				if (hours > 0 || days > 0) out += hours + 'h ';
+				out += mins + 'm';
+				return out || '0m';
+			}
+			return upRaw;
+		};
+
 		// Circular Dial Generator
 		var createDial = function(id, title) {
 			var radius = 70;
