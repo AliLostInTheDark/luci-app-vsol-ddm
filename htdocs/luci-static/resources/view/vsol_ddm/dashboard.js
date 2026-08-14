@@ -282,59 +282,56 @@ return view.extend({
 			};
 		};
 
-		// 1. Top Row: 3 Primary Dials
+		// 1. Top Row: 3 Primary Dials (RX, TX, Operating Temperature)
 		var rxDial = createDial('rx', _('Received Optical Power (RX)'));
+		var txDial = createDial('tx', _('Transmitted Optical Power (TX)'));
 		var tempDial = createDial('temp', _('Operating Temperature'));
-		var onuDial = createDial('onu', _('ONU & Link Status'));
 
 		container.appendChild(rxDial.node);
+		container.appendChild(txDial.node);
 		container.appendChild(tempDial.node);
-		container.appendChild(onuDial.node);
 
-		// 2. Second Row: Hardware Telemetry Card
-		var infoCard = E('div', { class: 'hw-card wide', style: 'align-items: stretch; margin-top: 5px;' }, [
-			E('h3', {}, _('Transceiver & ONT System Information')),
-			E('div', { class: 'hw-thermals-container' }, [
-				// Column 1: Device & GPON Identification
-				E('div', { class: 'hw-thermals-col hw-thermals-col-left' }, [
-					E('div', { class: 'hw-thermals-title' }, _('Device Identification')),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Model:')), E('span', { id: 'info-model', class: 'hw-kv-v' }, 'V2802RH')]),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Vendor:')), E('span', { id: 'info-vendor', class: 'hw-kv-v' }, 'VSOL')]),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('GPON SN:')), E('span', { id: 'info-sn', class: 'hw-kv-v', style: 'color: #00acc1; font-weight: 700;' }, 'NKOT2F04917E')]),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('MAC Address:')), E('span', { id: 'info-mac', class: 'hw-kv-v' }, 'B4:64:15:31:71:25')]),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Hardware Revision:')), E('span', { id: 'info-hw', class: 'hw-kv-v' }, '8671x')]),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('System Uptime:')), E('span', { id: 'info-uptime', class: 'hw-kv-v' }, '--')])
-				]),
-				E('div', { class: 'hw-thermals-divider' }),
-				// Column 2: Optical & Firmware Specifications
-				E('div', { class: 'hw-thermals-col hw-thermals-col-mid' }, [
-					E('div', { class: 'hw-thermals-title' }, _('Optical & OMCI Specifications')),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Optical Transceiver:')), E('span', { id: 'info-bosa', class: 'hw-kv-v' }, 'GN25L95')]),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Wavelengths:')), E('span', { class: 'hw-kv-v' }, '1310 nm TX / 1490 nm RX')]),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Optical Interface:')), E('span', { class: 'hw-kv-v' }, 'SC-APC (Single Mode)')]),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Standard Compliance:')), E('span', { class: 'hw-kv-v' }, 'ITU-T G.984 / SFF-8472')]),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Firmware Version:')), E('span', { id: 'info-fw', class: 'hw-kv-v' }, 'V1.1.8')]),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Transceiver Class:')), E('span', { id: 'info-bosa-vendor', class: 'hw-kv-v' }, 'Class B+ BOSA')])
-				]),
-				E('div', { class: 'hw-thermals-divider' }),
-				// Column 3: Network & Interface Status
-				E('div', { class: 'hw-thermals-col hw-thermals-col-right' }, [
-					E('div', { class: 'hw-thermals-title' }, _('Network & Ethernet Status')),
-					E('div', { class: 'hw-kv' }, [
-						E('span', { class: 'hw-kv-k' }, _('LAN 1G (Port 1):')),
-						E('span', { id: 'info-lan1', class: 'hw-kv-v', style: 'color: #00acc1; font-weight: 700;' }, 'Up, 1000M Full (In Use)')
-					]),
-					E('div', { class: 'hw-kv' }, [
-						E('span', { class: 'hw-kv-k' }, _('LAN 2.5G (Port 0):')),
-						E('span', { id: 'info-lan25', class: 'hw-kv-v' }, 'Up, 2.5G Full')
-					]),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Module CPU Load:')), E('span', { id: 'info-cpu', class: 'hw-kv-v' }, '1%')]),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Management Link:')), E('span', { class: 'hw-kv-v' }, 'LAN 1G (Port 1)')]),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Registration State:')), E('span', { id: 'info-reg-state', class: 'hw-kv-v', style: 'color: #00acc1; font-weight: 700;' }, 'Operation State (O5)')])
-				])
-			])
+		// 2. Middle Row: 3 Dedicated Categorized Cards
+		// Card 1: GPON & OMCI Management
+		var gponCard = E('div', { class: 'hw-card', style: 'align-items: stretch; justify-content: flex-start;' }, [
+			E('h3', {}, _('GPON & OMCI Management')),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('ONU State:')), E('span', { id: 'info-onu-state', class: 'hw-temp-badge', style: 'font-weight: 700;' }, 'O5 - OPERATIONAL')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Registration:')), E('span', { id: 'info-onu-reg', class: 'hw-kv-v' }, 'Registered (O5)')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('GPON SN:')), E('span', { id: 'info-sn', class: 'hw-kv-v', style: 'color: #10b981; font-weight: 700;' }, 'NKOT2F04917E')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Vendor ID:')), E('span', { id: 'info-vendor', class: 'hw-kv-v' }, 'VSOL')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Firmware Version:')), E('span', { id: 'info-fw', class: 'hw-kv-v' }, 'V1.2.0')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Standard Compliance:')), E('span', { class: 'hw-kv-v' }, 'ITU-T G.984 / SFF-8472')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Registration State:')), E('span', { id: 'info-reg-state', class: 'hw-kv-v', style: 'color: #10b981; font-weight: 700;' }, 'Operation State (O5)')])
 		]);
-		container.appendChild(infoCard);
+
+		// Card 2: Transceiver & BOSA Diagnostics
+		var bosaCard = E('div', { class: 'hw-card', style: 'align-items: stretch; justify-content: flex-start;' }, [
+			E('h3', {}, _('Transceiver & BOSA Diagnostics')),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Transceiver Model:')), E('span', { id: 'info-bosa', class: 'hw-kv-v' }, 'GN25L95')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Transceiver Class:')), E('span', { id: 'info-bosa-vendor', class: 'hw-kv-v' }, 'VSOL Class B+ BOSA')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('TX Wavelength:')), E('span', { class: 'hw-kv-v' }, '1310 nm (Single Mode)')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('RX Wavelength:')), E('span', { class: 'hw-kv-v' }, '1490 nm (Single Mode)')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Optical Interface:')), E('span', { class: 'hw-kv-v' }, 'SC-APC (Single Mode)')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Supply Voltage (VCC):')), E('span', { id: 'info-vcc', class: 'hw-kv-v' }, '3.28 V')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Laser Bias Current:')), E('span', { id: 'info-bias', class: 'hw-kv-v' }, '15.7 mA')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Hardware Revision:')), E('span', { id: 'info-hw', class: 'hw-kv-v' }, '8671x')])
+		]);
+
+		// Card 3: Ethernet & Network Performance
+		var netCard = E('div', { class: 'hw-card', style: 'align-items: stretch; justify-content: flex-start;' }, [
+			E('h3', {}, _('Ethernet & Network Performance')),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('LAN 1G (Port 1):')), E('span', { id: 'info-lan1', class: 'hw-kv-v', style: 'color: #10b981; font-weight: 700;' }, 'Up, 1000M Full (In Use)')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('LAN 2.5G (Port 0):')), E('span', { id: 'info-lan25', class: 'hw-kv-v' }, 'Up, 2.5G Full')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Management Link:')), E('span', { class: 'hw-kv-v' }, 'LAN 1G (Port 1)')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Base MAC Address:')), E('span', { id: 'info-mac', class: 'hw-kv-v' }, '00:18:93:..')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Module CPU Load:')), E('span', { id: 'info-cpu', class: 'hw-kv-v' }, '1%')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Model Name:')), E('span', { id: 'info-model', class: 'hw-kv-v' }, 'V2802RH (XPON+1GF+2.5GE)')]),
+			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('System Uptime:')), E('span', { id: 'info-uptime', class: 'hw-kv-v' }, '--')])
+		]);
+
+		container.appendChild(gponCard);
+		container.appendChild(bosaCard);
+		container.appendChild(netCard);
 
 		// 3. Third Row: Diagnostic Threshold Matrix & Alarms (Wide Card)
 		var threshCard = E('div', { class: 'hw-card wide', style: 'align-items: stretch; margin-top: 5px;' }, [
@@ -480,7 +477,7 @@ return view.extend({
 				]));
 				rxStats.appendChild(E('div', { class: 'hw-stat-row' }, [
 					E('span', { class: 'hw-stat-label' }, _('Optimal Range:')),
-					E('span', { class: 'hw-stat-value', style: 'color: #10b981;' }, '-12.0 to -24.0 dBm')
+					E('span', { class: 'hw-stat-value', style: 'color: #10b981;' }, '-13.0 to -24.0 dBm')
 				]));
 				rxStats.appendChild(E('div', { class: 'hw-stat-row' }, [
 					E('span', { class: 'hw-stat-label' }, _('RX Wavelength:')),
@@ -488,7 +485,65 @@ return view.extend({
 				]));
 			}
 
-			// 2. Temperature Dial
+			// 2. TX Power Dial (Pie / Circular Bar)
+			var txTxt = document.getElementById('dial-txt-tx');
+			var txPill = document.getElementById('dial-pill-tx');
+			var txProg = document.getElementById('dial-prog-tx');
+			var txStats = document.getElementById('stats-tx');
+
+			var txPct = (tx <= -35) ? 0 : Math.min(100, Math.max(5, ((tx + 1.0) / 6.0) * 100));
+			var txDash = (txPct / 100) * txDial.circ;
+
+			if (txTxt) {
+				txTxt.innerHTML = '';
+				if (tx <= -35) {
+					txTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: #64748b; font-size: 1.05em;' }, _('Laser Off')));
+				} else if (self.unitSystem === 'dual') {
+					var uwTx = toMicrowatts(tx);
+					var uwTxFormatted = (uwTx < 1000 ? uwTx.toFixed(1) + ' µW' : (uwTx/1000).toFixed(2) + ' mW');
+					txTxt.appendChild(E('span', { class: 'hw-dial-line', style: 'color: ' + txQ.color + ';' }, (tx >= 0 ? '+' : '') + tx.toFixed(2) + ' dBm'));
+					txTxt.appendChild(E('span', { class: 'hw-dial-line', style: 'color: ' + txQ.color + ';' }, uwTxFormatted));
+				} else if (self.unitSystem === 'imperial') {
+					var uwTxImp = toMicrowatts(tx);
+					var uwTxSingle = (uwTxImp < 1000 ? uwTxImp.toFixed(1) + ' µW' : (uwTxImp/1000).toFixed(2) + ' mW');
+					txTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + txQ.color + ';' }, uwTxSingle));
+				} else {
+					txTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + txQ.color + ';' }, (tx >= 0 ? '+' : '') + tx.toFixed(2) + ' dBm'));
+				}
+			}
+
+			if (txPill) {
+				txPill.textContent = txQ.label;
+				txPill.style.color = txQ.color;
+				txPill.style.background = txQ.bg;
+			}
+
+			if (txProg) {
+				txProg.style.strokeDasharray = txDash + ' ' + txDial.circ;
+				txProg.style.stroke = txQ.color;
+			}
+
+			if (txStats) {
+				txStats.innerHTML = '';
+				txStats.appendChild(E('div', { class: 'hw-stat-row' }, [
+					E('span', { class: 'hw-stat-label' }, _('Transmitter State:')),
+					E('span', { class: 'hw-stat-value', style: 'color: ' + txQ.color + '; font-weight: 700;' }, txQ.badge)
+				]));
+				txStats.appendChild(E('div', { class: 'hw-stat-row' }, [
+					E('span', { class: 'hw-stat-label' }, _('Calculated Power:')),
+					E('span', { class: 'hw-stat-value', style: 'color: ' + txQ.color + ';' }, (tx <= -35 ? 'Laser Inactive' : fmtPower(tx)))
+				]));
+				txStats.appendChild(E('div', { class: 'hw-stat-row' }, [
+					E('span', { class: 'hw-stat-label' }, _('Target TX Range:')),
+					E('span', { class: 'hw-stat-value', style: 'color: #10b981;' }, '+1.5 to +4.5 dBm')
+				]));
+				txStats.appendChild(E('div', { class: 'hw-stat-row' }, [
+					E('span', { class: 'hw-stat-label' }, _('TX Wavelength:')),
+					E('span', { class: 'hw-stat-value' }, '1310 nm')
+				]));
+			}
+
+			// 3. Temperature Dial
 			var tempTxt = document.getElementById('dial-txt-temp');
 			var tempPill = document.getElementById('dial-pill-temp');
 			var tempProg = document.getElementById('dial-prog-temp');
@@ -544,68 +599,42 @@ return view.extend({
 				]));
 			}
 
-			// 3. ONU & Link Dial
-			var onuTxt = document.getElementById('dial-txt-onu');
-			var onuPill = document.getElementById('dial-pill-onu');
-			var onuProg = document.getElementById('dial-prog-onu');
-			var onuStats = document.getElementById('stats-onu');
-
-			var onuStateStr = onu.state ? String(onu.state).toUpperCase() : 'O1';
-			var onuStateNum = parseInt(onuStateStr.replace(/[^0-9]/g, '')) || 1;
-			var onuPct = Math.min(100, Math.max(20, (onuStateNum / 5.0) * 100));
-			var onuDash = (onuPct / 100) * onuDial.circ;
-			var onuColor = (onuStateStr === 'O5') ? '#10b981' : ((onuStateNum >= 2) ? '#f59e0b' : '#64748b');
-			var onuPillBg = (onuStateStr === 'O5') ? 'rgba(16,185,129,0.15)' : ((onuStateNum >= 2) ? 'rgba(245,158,11,0.15)' : 'rgba(100,116,139,0.18)');
-			var onuSubLabel = (onuStateStr === 'O5') ? _('O5 - OPERATIONAL') : ((onuStateNum >= 2) ? _('SYNCHRONIZING') : _('O1 - STANDBY'));
-
-			if (onuTxt) {
-				onuTxt.innerHTML = '';
-				onuTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + onuColor + ';' }, onuStateStr));
-			}
-			if (onuPill) {
-				onuPill.textContent = onuSubLabel;
-				onuPill.style.color = onuColor;
-				onuPill.style.background = onuPillBg;
-			}
-			if (onuProg) {
-				onuProg.style.strokeDasharray = onuDash + ' ' + onuDial.circ;
-				onuProg.style.stroke = onuColor;
-			}
-
-			if (onuStats) {
-				onuStats.innerHTML = '';
-				onuStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('Registration Status:')),
-					E('span', { class: 'hw-stat-value', style: 'color: ' + onuColor + '; font-weight: 700;' }, onu.registered_status || (onuStateStr === 'O5' ? 'Registered (O5)' : 'Standby'))
-				]));
-				onuStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('1G Port (In Use):')),
-					E('span', { class: 'hw-stat-value', style: 'color: #10b981; font-weight: 700;' }, (dev.lan1g ? dev.lan1g : 'Up, 1000M Full'))
-				]));
-				onuStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('2.5G Port:')),
-					E('span', { class: 'hw-stat-value' }, (dev.lan25g ? dev.lan25g : 'Up, 2.5G Full'))
-				]));
-			}
-
-			// 4. Detailed Telemetry Grid
+			// 4. Update Categorized Cards
 			var setTxt = function(id, val) {
 				var el = document.getElementById(id);
 				if (el && val !== undefined && val !== null && val !== '') el.textContent = val;
 			};
-			setTxt('info-model', dev.model);
-			setTxt('info-vendor', dev.vendor);
+
+			// Card 1: GPON & OMCI
+			var onuStateStr = onu.state ? String(onu.state).toUpperCase() : (onu.state_raw && onu.state_raw.indexOf('O5') !== -1 ? 'O5' : 'O1');
+			var onuColor = (onuStateStr === 'O5' || (onu.state_raw && onu.state_raw.indexOf('O5') !== -1)) ? '#10b981' : '#64748b';
+			var onuPillBg = (onuColor === '#10b981') ? 'rgba(16,185,129,0.15)' : 'rgba(100,116,139,0.18)';
+			var onuStateEl = document.getElementById('info-onu-state');
+			if (onuStateEl) {
+				onuStateEl.textContent = (onuColor === '#10b981') ? _('O5 - OPERATIONAL') : _('O1 - STANDBY');
+				onuStateEl.style.color = onuColor;
+				onuStateEl.style.background = onuPillBg;
+			}
+			setTxt('info-onu-reg', onu.registered_status || (onuColor === '#10b981' ? 'Registered (O5)' : 'Standby'));
 			setTxt('info-sn', (onu.serial_number || dev.gpon_sn || 'NKOT2F04917E'));
-			setTxt('info-mac', dev.mac);
-			setTxt('info-hw', dev.hardware);
-			setTxt('info-uptime', formatUptime(dev.uptime));
-			setTxt('info-bosa', ddm.part_number);
-			setTxt('info-fw', dev.firmware);
-			setTxt('info-bosa-vendor', ddm.vendor_name || 'Class B+ BOSA');
+			setTxt('info-vendor', dev.vendor || 'VSOL');
+			setTxt('info-fw', dev.firmware || 'V1.2.0');
+			setTxt('info-reg-state', onu.state_raw || 'Operation State (O5)');
+
+			// Card 2: Transceiver & BOSA Diagnostics
+			setTxt('info-bosa', ddm.part_number || 'GN25L95');
+			setTxt('info-bosa-vendor', ddm.vendor_name || 'VSOL Class B+ BOSA');
+			setTxt('info-vcc', isNaN(volt) ? '-- V' : volt.toFixed(2) + ' V');
+			setTxt('info-bias', isNaN(bias) ? '-- mA' : bias.toFixed(1) + ' mA');
+			setTxt('info-hw', dev.hardware || '8671x');
+
+			// Card 3: Ethernet & Network Performance
 			setTxt('info-lan1', (dev.lan1g ? dev.lan1g + ' (In Use)' : 'Up, 1000M Full (In Use)'));
 			setTxt('info-lan25', (dev.lan25g ? dev.lan25g : 'Up, 2.5G Full'));
-			setTxt('info-cpu', dev.cpu_usage);
-			setTxt('info-reg-state', onu.state_raw || 'Operation State (O5)');
+			setTxt('info-mac', dev.mac);
+			setTxt('info-cpu', dev.cpu_usage || '1%');
+			setTxt('info-model', dev.model || 'V2802RH (XPON+1GF+2.5GE)');
+			setTxt('info-uptime', formatUptime(dev.uptime));
 
 			// 5. Threshold Matrix Table
 			var setTableVal = function(id, val, color) {
