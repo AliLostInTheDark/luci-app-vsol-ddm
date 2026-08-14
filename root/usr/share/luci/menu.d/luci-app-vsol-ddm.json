@@ -1,0 +1,26 @@
+{
+	"admin/status/vsol_ddm": {
+		"title": "VSOL V2802RH DDM",
+		"action": {
+			"type": "view",
+			"path": "vsol_ddm/dashboard"
+		},
+		"depends": {
+			"acl": [ "luci-app-vsol-ddm" ]
+		},
+		"order": 82
+	},
+	"admin/status/vsol_ddm/dashboard": {
+		"title": "Optical Diagnostics",
+		"type": "firstchild",
+		"order": 1
+	},
+	"admin/status/vsol_ddm/settings": {
+		"title": "Settings",
+		"action": {
+			"type": "view",
+			"path": "vsol_ddm/settings"
+		},
+		"order": 2
+	}
+}

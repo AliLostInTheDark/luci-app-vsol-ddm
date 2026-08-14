@@ -1,0 +1,116 @@
+#!/bin/sh
+# VSOL V2802RH / Realtek ONU DDM & Optical Diagnostics rpcd backend
+# High-performance caching & telnet client integration
+
+UCI_CONFIG="vsol_ddm"
+CACHE_FILE="/tmp/vsol_ddm_cache.json"
+CACHE_TTL=2 # Cache valid for 2 seconds
+
+get_config() {
+	if command -v uci >/dev/null 2>&1; then
+		ENABLED=$(uci -q get ${UCI_CONFIG}.main.enabled 2>/dev/null || echo "1")
+		HOST=$(uci -q get ${UCI_CONFIG}.main.host 2>/dev/null || echo "192.168.100.1")
+		PORT=$(uci -q get ${UCI_CONFIG}.main.port 2>/dev/null || echo "23")
+		USER=$(uci -q get ${UCI_CONFIG}.main.username 2>/dev/null || echo "admin")
+		PASS=$(uci -q get ${UCI_CONFIG}.main.password 2>/dev/null || echo "Admin@123")
+		TIMEOUT=$(uci -q get ${UCI_CONFIG}.main.timeout 2>/dev/null || echo "3")
+	else
+		ENABLED="1"
+		HOST="192.168.100.1"
+		PORT="23"
+		USER="admin"
+		PASS="Admin@123"
+		TIMEOUT="3"
+	fi
+}
+
+fetch_telemetry() {
+	get_config
+
+	if [ "$ENABLED" != "1" ]; then
+		cat <<EOF
+{
+	"success": false,
+	"connected": false,
+	"error": "Monitoring has been disabled in configuration"
+}
+EOF
+		return
+	fi
+
+	# Return cached response if fresh (instant response)
+	if [ -f "$CACHE_FILE" ]; then
+		local CACHE_AGE=$(( $(date +%s) - $(date -r "$CACHE_FILE" +%s 2>/dev/null || echo 999) ))
+		if [ "$CACHE_AGE" -le "$CACHE_TTL" ]; then
+			cat "$CACHE_FILE"
+			return
+		fi
+	fi
+
+	local RES=""
+	if [ -x "/usr/bin/vsol_query" ]; then
+		RES=$(/usr/bin/vsol_query "$HOST" "$PORT" "$USER" "$PASS" "$TIMEOUT" 2>/dev/null)
+	elif [ -x "/usr/libexec/vsol_query" ]; then
+		RES=$(/usr/libexec/vsol_query "$HOST" "$PORT" "$USER" "$PASS" "$TIMEOUT" 2>/dev/null)
+	fi
+
+	if [ -n "$RES" ] && echo "$RES" | grep -q '"success": true'; then
+		echo "$RES" > "$CACHE_FILE"
+		echo "$RES"
+	else
+		# Return stale cache as fallback if query failed
+		if [ -f "$CACHE_FILE" ]; then
+			cat "$CACHE_FILE"
+			return
+		fi
+
+		cat <<EOF
+{
+	"success": false,
+	"connected": false,
+	"host": "$HOST",
+	"error": "Unable to connect or authenticate to VSOL ONT at $HOST:$PORT"
+}
+EOF
+	fi
+}
+
+test_connection() {
+	get_config
+	if [ -x "/usr/bin/vsol_query" ]; then
+		/usr/bin/vsol_query "$HOST" "$PORT" "$USER" "$PASS" "$TIMEOUT" --test
+	elif [ -x "/usr/libexec/vsol_query" ]; then
+		/usr/libexec/vsol_query "$HOST" "$PORT" "$USER" "$PASS" "$TIMEOUT" --test
+	else
+		cat <<EOF
+{
+	"success": false,
+	"connected": false,
+	"host": "$HOST",
+	"message": "vsol_query binary helper not found"
+}
+EOF
+	fi
+}
+
+case "$1" in
+	list)
+		echo '{ "get_status": {}, "get_info": {}, "test_connection": {} }'
+		;;
+	call)
+		case "$2" in
+			get_status|get_info)
+				fetch_telemetry
+				;;
+			test_connection)
+				test_connection
+				;;
+			*)
+				echo '{"error": "Unknown method"}'
+				;;
+		esac
+		;;
+	*)
+		echo '{"error": "Invalid action"}'
+		;;
+esac
