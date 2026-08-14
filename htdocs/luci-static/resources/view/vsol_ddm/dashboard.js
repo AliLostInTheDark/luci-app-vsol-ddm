@@ -140,109 +140,99 @@ return view.extend({
 		};
 
 		// Diagnostic Quality & Official Standards Evaluator (ITU-T G.984 / SFF-8472 / IEEE 802.3ah)
-		var getRxQuality = function(rx, th) {
+		var getRxQuality = function(rx) {
 			if (isNaN(rx) || rx <= -35.0) {
 				return { color: '#64748b', bg: 'rgba(100,116,139,0.18)', label: _('NO SIGNAL'), badge: _('No Signal'), severity: 'off' };
 			}
-			var lowAlarm = (th && th.rx_pwr_low_alarm !== undefined) ? th.rx_pwr_low_alarm : -28.0;
-			var lowWarn = (th && th.rx_pwr_low_warn !== undefined) ? th.rx_pwr_low_warn : -24.0;
-			var highWarn = (th && th.rx_pwr_high_warn !== undefined) ? th.rx_pwr_high_warn : -8.0;
-			var highAlarm = (th && th.rx_pwr_high_alarm !== undefined) ? th.rx_pwr_high_alarm : -7.0;
-
-			if (rx <= lowAlarm) {
-				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('CRITICAL LOW (ALARM)'), badge: _('Low Alarm'), severity: 'alarm' };
+			// ITU-T Standard Optical Link Health Grading:
+			// Optimal / Best: -13.0 to -24.0 dBm (Green)
+			// Marginal / Low Warning: -24.1 to -27.5 dBm (Yellow / Amber)
+			// High Warning: -8.0 to -12.9 dBm (Yellow / Amber)
+			// Alarm / Worst: < -27.5 dBm (Critical Low) OR > -8.0 dBm (Overload) (Red)
+			if (rx <= -27.5) {
+				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('CRITICAL LOW (ALARM)'), badge: _('Critical Low'), severity: 'alarm' };
 			}
-			if (rx <= lowWarn) {
-				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('MARGINAL LOW (WARN)'), badge: _('Low Warning'), severity: 'warn' };
+			if (rx < -24.0) {
+				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('MARGINAL LOW (WARN)'), badge: _('Marginal (Low)'), severity: 'warn' };
 			}
-			if (rx >= highAlarm) {
-				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('SIGNAL OVERLOAD (ALARM)'), badge: _('High Alarm'), severity: 'alarm' };
+			if (rx > -8.0) {
+				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('SIGNAL OVERLOAD (ALARM)'), badge: _('Overload Alarm'), severity: 'alarm' };
 			}
-			if (rx >= highWarn) {
-				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('HIGH SIGNAL (WARN)'), badge: _('High Warning'), severity: 'warn' };
+			if (rx > -13.0) {
+				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('HIGH SIGNAL (WARN)'), badge: _('High (Warning)'), severity: 'warn' };
 			}
 			return { color: '#10b981', bg: 'rgba(16,185,129,0.15)', label: _('OPTIMAL SIGNAL (BEST)'), badge: _('Optimal'), severity: 'optimal' };
 		};
 
-		var getTxQuality = function(tx, th) {
+		var getTxQuality = function(tx) {
 			if (isNaN(tx) || tx <= -35.0) {
 				return { color: '#64748b', bg: 'rgba(100,116,139,0.18)', label: _('LASER INACTIVE'), badge: _('Inactive'), severity: 'off' };
 			}
-			var lowAlarm = (th && th.tx_pwr_low_alarm !== undefined) ? th.tx_pwr_low_alarm : 0.5;
-			var lowWarn = (th && th.tx_pwr_low_warn !== undefined) ? th.tx_pwr_low_warn : 1.0;
-			var highWarn = (th && th.tx_pwr_high_warn !== undefined) ? th.tx_pwr_high_warn : 4.5;
-			var highAlarm = (th && th.tx_pwr_high_alarm !== undefined) ? th.tx_pwr_high_alarm : 5.0;
-
-			if (tx <= lowAlarm) {
-				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('LOW TX POWER (ALARM)'), badge: _('Low Alarm'), severity: 'alarm' };
+			// ITU-T Standard Optical Transmit Grading:
+			// Optimal / Best: +1.5 to +4.5 dBm (Green)
+			// Marginal: +0.5 to +1.4 dBm OR +4.6 to +5.0 dBm (Yellow)
+			// Alarm: < +0.5 dBm OR > +5.0 dBm (Red)
+			if (tx < 0.5) {
+				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('LOW TX POWER (ALARM)'), badge: _('Low Tx Alarm'), severity: 'alarm' };
 			}
-			if (tx <= lowWarn) {
-				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('MARGINAL TX (WARN)'), badge: _('Low Warning'), severity: 'warn' };
+			if (tx < 1.5) {
+				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('MARGINAL TX (WARN)'), badge: _('Marginal Tx'), severity: 'warn' };
 			}
-			if (tx >= highAlarm) {
-				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('HIGH TX (ALARM)'), badge: _('High Alarm'), severity: 'alarm' };
+			if (tx > 5.0) {
+				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('HIGH TX (ALARM)'), badge: _('High Tx Alarm'), severity: 'alarm' };
 			}
-			if (tx >= highWarn) {
-				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('HIGH TX (WARN)'), badge: _('High Warning'), severity: 'warn' };
+			if (tx > 4.5) {
+				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('HIGH TX (WARN)'), badge: _('High Tx Warn'), severity: 'warn' };
 			}
 			return { color: '#10b981', bg: 'rgba(16,185,129,0.15)', label: _('OPTIMAL TX (BEST)'), badge: _('Optimal'), severity: 'optimal' };
 		};
 
-		var getTempQuality = function(temp, th) {
+		var getTempQuality = function(temp) {
 			if (isNaN(temp)) {
 				return { color: '#64748b', bg: 'rgba(100,116,139,0.18)', label: _('UNKNOWN'), badge: _('Unknown'), severity: 'off' };
 			}
-			var highAlarm = (th && th.temp_high_alarm !== undefined) ? th.temp_high_alarm : 85.0;
-			var highWarn = (th && th.temp_high_warn !== undefined) ? th.temp_high_warn : 75.0;
-			var lowWarn = (th && th.temp_low_warn !== undefined) ? th.temp_low_warn : -10.0;
-			var lowAlarm = (th && th.temp_low_alarm !== undefined) ? th.temp_low_alarm : -40.0;
-
-			if (temp >= highAlarm || temp <= lowAlarm) {
+			// Operating Temperature Grading:
+			// Optimal (Cool): < 55.0 °C (Green)
+			// Elevated (Warm): 55.0 °C to 69.9 °C (Yellow / Amber)
+			// Critical High (Alarm): >= 70.0 °C (Red)
+			// Low Warning: < 15.0 °C (Yellow)
+			// Low Alarm: <= 0.0 °C (Red)
+			if (temp >= 70.0) {
 				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('CRITICAL TEMP (ALARM)'), badge: _('High Alarm'), severity: 'alarm' };
 			}
-			if (temp >= highWarn) {
-				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('HIGH TEMP (WARN)'), badge: _('High Warning'), severity: 'warn' };
+			if (temp >= 55.0) {
+				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('ELEVATED (WARM)'), badge: _('Warm / Elevated'), severity: 'warn' };
 			}
-			if (temp >= 62.0) {
-				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('ELEVATED (WARM)'), badge: _('Elevated'), severity: 'warn' };
+			if (temp <= 0.0) {
+				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('LOW TEMP (ALARM)'), badge: _('Low Alarm'), severity: 'alarm' };
 			}
-			if (temp <= lowWarn) {
-				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('LOW TEMP (WARN)'), badge: _('Low Warning'), severity: 'warn' };
+			if (temp < 15.0) {
+				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('LOW TEMP (WARN)'), badge: _('Low Temp'), severity: 'warn' };
 			}
 			return { color: '#10b981', bg: 'rgba(16,185,129,0.15)', label: _('OPTIMAL (COOL)'), badge: _('Optimal'), severity: 'optimal' };
 		};
 
-		var getVoltQuality = function(volt, th) {
+		var getVoltQuality = function(volt) {
 			if (isNaN(volt)) {
 				return { color: '#64748b', bg: 'rgba(100,116,139,0.18)', label: _('UNKNOWN'), badge: _('Unknown'), severity: 'off' };
 			}
-			var lowAlarm = (th && th.voltage_low_alarm !== undefined) ? th.voltage_low_alarm : 2.90;
-			var lowWarn = (th && th.voltage_low_warn !== undefined) ? th.voltage_low_warn : 3.05;
-			var highWarn = (th && th.voltage_high_warn !== undefined) ? th.voltage_high_warn : 3.55;
-			var highAlarm = (th && th.voltage_high_alarm !== undefined) ? th.voltage_high_alarm : 3.70;
-
-			if (volt <= lowAlarm || volt >= highAlarm) {
+			if (volt < 3.05 || volt > 3.55) {
 				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('VOLTAGE ALARM'), badge: _('Alarm'), severity: 'alarm' };
 			}
-			if (volt <= lowWarn || volt >= highWarn) {
+			if (volt < 3.15 || volt > 3.45) {
 				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('MARGINAL VCC'), badge: _('Warning'), severity: 'warn' };
 			}
 			return { color: '#10b981', bg: 'rgba(16,185,129,0.15)', label: _('OPTIMAL (3.3V)'), badge: _('Optimal'), severity: 'optimal' };
 		};
 
-		var getBiasQuality = function(bias, tx, th) {
+		var getBiasQuality = function(bias, tx) {
 			if (isNaN(bias) || bias <= 0.0 || (tx !== undefined && tx <= -35)) {
 				return { color: '#64748b', bg: 'rgba(100,116,139,0.18)', label: _('STANDBY / OFF'), badge: _('Standby'), severity: 'off' };
 			}
-			var lowAlarm = (th && th.bias_low_alarm !== undefined) ? th.bias_low_alarm : 1.0;
-			var lowWarn = (th && th.bias_low_warn !== undefined) ? th.bias_low_warn : 2.0;
-			var highWarn = (th && th.bias_high_warn !== undefined) ? th.bias_high_warn : 60.0;
-			var highAlarm = (th && th.bias_high_alarm !== undefined) ? th.bias_high_alarm : 70.0;
-
-			if (bias <= lowAlarm || bias >= highAlarm) {
+			if (bias > 45.0 || bias < 1.0) {
 				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('BIAS ALARM'), badge: _('Alarm'), severity: 'alarm' };
 			}
-			if (bias <= lowWarn || bias >= highWarn) {
+			if (bias > 25.0 || bias < 5.0) {
 				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('ELEVATED BIAS'), badge: _('Warning'), severity: 'warn' };
 			}
 			return { color: '#10b981', bg: 'rgba(16,185,129,0.15)', label: _('OPTIMAL BIAS'), badge: _('Optimal'), severity: 'optimal' };
@@ -436,11 +426,11 @@ return view.extend({
 			var bias = parseFloat(ddm.bias_current_ma);
 
 			// Diagnostic Quality & Official Standards Evaluator
-			var rxQ = getRxQuality(rx, th);
-			var txQ = getTxQuality(tx, th);
-			var tempQ = getTempQuality(temp, th);
-			var voltQ = getVoltQuality(volt, th);
-			var biasQ = getBiasQuality(bias, tx, th);
+			var rxQ = getRxQuality(rx);
+			var txQ = getTxQuality(tx);
+			var tempQ = getTempQuality(temp);
+			var voltQ = getVoltQuality(volt);
+			var biasQ = getBiasQuality(bias, tx);
 
 			// 1. RX Power Dial
 			var rxTxt = document.getElementById('dial-txt-rx');
