@@ -1,7 +1,4 @@
 #!/bin/sh
-
-chmod 0755 /usr/libexec/rpcd/vsol_ddm 2>/dev/null || true
-[ -x /usr/bin/vsol_query ] && chmod 0755 /usr/bin/vsol_query 2>/dev/null || true
-[ -x /usr/libexec/vsol_query ] && chmod 0755 /usr/libexec/vsol_query 2>/dev/null || true
-
+# Flush LuCI and rpcd caches upon installation / upgrade
+rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache* /tmp/vsol_ddm_cache.json /tmp/luci-sessions/*
 exit 0

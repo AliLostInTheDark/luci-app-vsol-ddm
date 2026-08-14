@@ -69,6 +69,18 @@ endef
 define Package/luci-app-vsol-ddm/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
+	rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache* /tmp/vsol_ddm_cache.json /tmp/luci-sessions/*
+	/etc/init.d/rpcd reload 2>/dev/null || true
+	/etc/init.d/rpcd restart 2>/dev/null || true
+	/etc/init.d/uhttpd restart 2>/dev/null || true
+}
+exit 0
+endef
+
+define Package/luci-app-vsol-ddm/postrm
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT}" ] || {
+	rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache* /tmp/vsol_ddm_cache.json /tmp/luci-sessions/*
 	/etc/init.d/rpcd reload 2>/dev/null || true
 	/etc/init.d/uhttpd restart 2>/dev/null || true
 }

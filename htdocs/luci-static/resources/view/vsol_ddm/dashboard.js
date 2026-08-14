@@ -32,14 +32,7 @@ return view.extend({
 		if (window.localStorage) {
 			var savedUnit = window.localStorage.getItem('vsol_unit_system');
 			if (savedUnit) self.unitSystem = savedUnit;
-
-			// Instant cache snapshot if live status is pending
-			if (!initialStatus || !initialStatus.ddm) {
-				try {
-					var cached = JSON.parse(window.localStorage.getItem('vsol_last_telemetry') || '{}');
-					if (cached && cached.ddm) initialStatus = cached;
-				} catch(e) {}
-			}
+			try { window.localStorage.removeItem('vsol_last_telemetry'); } catch(e) {}
 		}
 
 		var container = E('div', {

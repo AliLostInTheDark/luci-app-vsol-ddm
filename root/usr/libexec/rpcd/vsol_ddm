@@ -4,7 +4,7 @@
 
 UCI_CONFIG="vsol_ddm"
 CACHE_FILE="/tmp/vsol_ddm_cache.json"
-CACHE_TTL=2 # Cache valid for 2 seconds
+CACHE_TTL=1 # Cache valid for 1 second max
 
 get_config() {
 	if command -v uci >/dev/null 2>&1; then
