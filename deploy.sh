@@ -2,7 +2,7 @@
 # Deploy luci-app-vsol-ddm to live OpenWrt router over SSH
 set -e
 
-ROUTER_IP="${1:-192.168.10.1}"
+ROUTER_IP="${1:-10.10.10.1}"
 echo "==> Deploying luci-app-vsol-ddm to ${ROUTER_IP}..."
 
 TMP_DIR=$(mktemp -d)
@@ -24,8 +24,11 @@ cp -r root/usr/libexec/rpcd/* "$TMP_DIR/usr/libexec/rpcd/"
 cp -r root/usr/share/luci/menu.d/* "$TMP_DIR/usr/share/luci/menu.d/"
 cp -r root/usr/share/rpcd/acl.d/* "$TMP_DIR/usr/share/rpcd/acl.d/"
 
-# If compiled binary exists
-if [ -f "src/vsol_query" ]; then
+# Check for cross-compiled target binary first
+BUILD_BIN="/home/ali/openwrt-jidu6j11/build_dir/target-aarch64_cortex-a53_musl/luci-app-vsol-ddm/vsol_query"
+if [ -f "$BUILD_BIN" ]; then
+	cp "$BUILD_BIN" "$TMP_DIR/usr/bin/vsol_query"
+elif [ -f "src/vsol_query" ]; then
 	cp "src/vsol_query" "$TMP_DIR/usr/bin/vsol_query"
 fi
 
@@ -36,8 +39,9 @@ echo "==> Setting permissions and restarting services..."
 ssh root@"$ROUTER_IP" "
 	chmod 0755 /usr/libexec/rpcd/vsol_ddm /etc/uci-defaults/80_luci-app-vsol-ddm 2>/dev/null || true
 	[ -f /usr/bin/vsol_query ] && chmod 0755 /usr/bin/vsol_query 2>/dev/null || true
-	/etc/uci-defaults/80_luci-app-vsol-ddm 2>/dev/null || true
+	rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache* /tmp/vsol_ddm_cache.json
 	/etc/init.d/rpcd reload
+	/etc/init.d/rpcd restart
 	/etc/init.d/uhttpd restart
 "
 
