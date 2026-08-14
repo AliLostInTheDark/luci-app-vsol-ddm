@@ -139,6 +139,115 @@ return view.extend({
 			return upRaw;
 		};
 
+		// Diagnostic Quality & Official Standards Evaluator (ITU-T G.984 / SFF-8472 / IEEE 802.3ah)
+		var getRxQuality = function(rx, th) {
+			if (isNaN(rx) || rx <= -35.0) {
+				return { color: '#64748b', bg: 'rgba(100,116,139,0.18)', label: _('NO SIGNAL'), badge: _('No Signal'), severity: 'off' };
+			}
+			var lowAlarm = (th && th.rx_pwr_low_alarm !== undefined) ? th.rx_pwr_low_alarm : -28.0;
+			var lowWarn = (th && th.rx_pwr_low_warn !== undefined) ? th.rx_pwr_low_warn : -24.0;
+			var highWarn = (th && th.rx_pwr_high_warn !== undefined) ? th.rx_pwr_high_warn : -8.0;
+			var highAlarm = (th && th.rx_pwr_high_alarm !== undefined) ? th.rx_pwr_high_alarm : -7.0;
+
+			if (rx <= lowAlarm) {
+				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('CRITICAL LOW (ALARM)'), badge: _('Low Alarm'), severity: 'alarm' };
+			}
+			if (rx <= lowWarn) {
+				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('MARGINAL LOW (WARN)'), badge: _('Low Warning'), severity: 'warn' };
+			}
+			if (rx >= highAlarm) {
+				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('SIGNAL OVERLOAD (ALARM)'), badge: _('High Alarm'), severity: 'alarm' };
+			}
+			if (rx >= highWarn) {
+				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('HIGH SIGNAL (WARN)'), badge: _('High Warning'), severity: 'warn' };
+			}
+			return { color: '#10b981', bg: 'rgba(16,185,129,0.15)', label: _('OPTIMAL SIGNAL (BEST)'), badge: _('Optimal'), severity: 'optimal' };
+		};
+
+		var getTxQuality = function(tx, th) {
+			if (isNaN(tx) || tx <= -35.0) {
+				return { color: '#64748b', bg: 'rgba(100,116,139,0.18)', label: _('LASER INACTIVE'), badge: _('Inactive'), severity: 'off' };
+			}
+			var lowAlarm = (th && th.tx_pwr_low_alarm !== undefined) ? th.tx_pwr_low_alarm : 0.5;
+			var lowWarn = (th && th.tx_pwr_low_warn !== undefined) ? th.tx_pwr_low_warn : 1.0;
+			var highWarn = (th && th.tx_pwr_high_warn !== undefined) ? th.tx_pwr_high_warn : 4.5;
+			var highAlarm = (th && th.tx_pwr_high_alarm !== undefined) ? th.tx_pwr_high_alarm : 5.0;
+
+			if (tx <= lowAlarm) {
+				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('LOW TX POWER (ALARM)'), badge: _('Low Alarm'), severity: 'alarm' };
+			}
+			if (tx <= lowWarn) {
+				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('MARGINAL TX (WARN)'), badge: _('Low Warning'), severity: 'warn' };
+			}
+			if (tx >= highAlarm) {
+				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('HIGH TX (ALARM)'), badge: _('High Alarm'), severity: 'alarm' };
+			}
+			if (tx >= highWarn) {
+				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('HIGH TX (WARN)'), badge: _('High Warning'), severity: 'warn' };
+			}
+			return { color: '#10b981', bg: 'rgba(16,185,129,0.15)', label: _('OPTIMAL TX (BEST)'), badge: _('Optimal'), severity: 'optimal' };
+		};
+
+		var getTempQuality = function(temp, th) {
+			if (isNaN(temp)) {
+				return { color: '#64748b', bg: 'rgba(100,116,139,0.18)', label: _('UNKNOWN'), badge: _('Unknown'), severity: 'off' };
+			}
+			var highAlarm = (th && th.temp_high_alarm !== undefined) ? th.temp_high_alarm : 85.0;
+			var highWarn = (th && th.temp_high_warn !== undefined) ? th.temp_high_warn : 75.0;
+			var lowWarn = (th && th.temp_low_warn !== undefined) ? th.temp_low_warn : -10.0;
+			var lowAlarm = (th && th.temp_low_alarm !== undefined) ? th.temp_low_alarm : -40.0;
+
+			if (temp >= highAlarm || temp <= lowAlarm) {
+				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('CRITICAL TEMP (ALARM)'), badge: _('High Alarm'), severity: 'alarm' };
+			}
+			if (temp >= highWarn) {
+				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('HIGH TEMP (WARN)'), badge: _('High Warning'), severity: 'warn' };
+			}
+			if (temp >= 62.0) {
+				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('ELEVATED (WARM)'), badge: _('Elevated'), severity: 'warn' };
+			}
+			if (temp <= lowWarn) {
+				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('LOW TEMP (WARN)'), badge: _('Low Warning'), severity: 'warn' };
+			}
+			return { color: '#10b981', bg: 'rgba(16,185,129,0.15)', label: _('OPTIMAL (COOL)'), badge: _('Optimal'), severity: 'optimal' };
+		};
+
+		var getVoltQuality = function(volt, th) {
+			if (isNaN(volt)) {
+				return { color: '#64748b', bg: 'rgba(100,116,139,0.18)', label: _('UNKNOWN'), badge: _('Unknown'), severity: 'off' };
+			}
+			var lowAlarm = (th && th.voltage_low_alarm !== undefined) ? th.voltage_low_alarm : 2.90;
+			var lowWarn = (th && th.voltage_low_warn !== undefined) ? th.voltage_low_warn : 3.05;
+			var highWarn = (th && th.voltage_high_warn !== undefined) ? th.voltage_high_warn : 3.55;
+			var highAlarm = (th && th.voltage_high_alarm !== undefined) ? th.voltage_high_alarm : 3.70;
+
+			if (volt <= lowAlarm || volt >= highAlarm) {
+				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('VOLTAGE ALARM'), badge: _('Alarm'), severity: 'alarm' };
+			}
+			if (volt <= lowWarn || volt >= highWarn) {
+				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('MARGINAL VCC'), badge: _('Warning'), severity: 'warn' };
+			}
+			return { color: '#10b981', bg: 'rgba(16,185,129,0.15)', label: _('OPTIMAL (3.3V)'), badge: _('Optimal'), severity: 'optimal' };
+		};
+
+		var getBiasQuality = function(bias, tx, th) {
+			if (isNaN(bias) || bias <= 0.0 || (tx !== undefined && tx <= -35)) {
+				return { color: '#64748b', bg: 'rgba(100,116,139,0.18)', label: _('STANDBY / OFF'), badge: _('Standby'), severity: 'off' };
+			}
+			var lowAlarm = (th && th.bias_low_alarm !== undefined) ? th.bias_low_alarm : 1.0;
+			var lowWarn = (th && th.bias_low_warn !== undefined) ? th.bias_low_warn : 2.0;
+			var highWarn = (th && th.bias_high_warn !== undefined) ? th.bias_high_warn : 60.0;
+			var highAlarm = (th && th.bias_high_alarm !== undefined) ? th.bias_high_alarm : 70.0;
+
+			if (bias <= lowAlarm || bias >= highAlarm) {
+				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('BIAS ALARM'), badge: _('Alarm'), severity: 'alarm' };
+			}
+			if (bias <= lowWarn || bias >= highWarn) {
+				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('ELEVATED BIAS'), badge: _('Warning'), severity: 'warn' };
+			}
+			return { color: '#10b981', bg: 'rgba(16,185,129,0.15)', label: _('OPTIMAL BIAS'), badge: _('Optimal'), severity: 'optimal' };
+		};
+
 		// Circular Dial Generator
 		var createDial = function(id, title) {
 			var radius = 70;
@@ -318,12 +427,20 @@ return view.extend({
 			var ddm = res.ddm;
 			var onu = res.onu || {};
 			var dev = res.device || {};
+			var th = res.thresholds || {};
 
 			var rx = parseFloat(ddm.rx_power_dbm);
 			var tx = parseFloat(ddm.tx_power_dbm);
 			var temp = parseFloat(ddm.temperature_c);
 			var volt = parseFloat(ddm.voltage_v);
 			var bias = parseFloat(ddm.bias_current_ma);
+
+			// Diagnostic Quality & Official Standards Evaluator
+			var rxQ = getRxQuality(rx, th);
+			var txQ = getTxQuality(tx, th);
+			var tempQ = getTempQuality(temp, th);
+			var voltQ = getVoltQuality(volt, th);
+			var biasQ = getBiasQuality(bias, tx, th);
 
 			// 1. RX Power Dial
 			var rxTxt = document.getElementById('dial-txt-rx');
@@ -333,64 +450,47 @@ return view.extend({
 
 			var rxPct = Math.min(100, Math.max(0, ((rx + 40) / 32) * 100));
 			var rxDash = (rxPct / 100) * rxDial.circ;
-			var rxColor = '#00acc1';
-			var rxStateBadge = 'OPTIMAL SIGNAL';
-			var rxPillBg = 'rgba(0,172,193,0.15)';
-
-			if (rx <= -35) {
-				rxColor = '#64748b'; // Slate for unlinked / low signal
-				rxStateBadge = 'NO SIGNAL';
-				rxPillBg = 'rgba(100,116,139,0.18)';
-			} else if (rx < -27) {
-				rxColor = '#d97706';
-				rxStateBadge = 'LOW POWER';
-				rxPillBg = 'rgba(217,119,6,0.15)';
-			} else if (rx > -8) {
-				rxColor = '#e11d48';
-				rxStateBadge = 'SIGNAL OVERLOAD';
-				rxPillBg = 'rgba(225,29,72,0.15)';
-			}
 
 			if (rxTxt) {
 				rxTxt.innerHTML = '';
 				if (self.unitSystem === 'dual') {
 					var uwVal = toMicrowatts(rx);
 					var uwFormatted = (uwVal < 1 ? uwVal.toFixed(2) : (uwVal >= 1000 ? (uwVal/1000).toFixed(1) : uwVal.toFixed(1))) + (uwVal >= 1000 ? ' mW' : ' µW');
-					rxTxt.appendChild(E('span', { class: 'hw-dial-line', style: 'color: ' + rxColor + ';' }, (isNaN(rx) ? '--' : rx.toFixed(1)) + ' dBm'));
-					rxTxt.appendChild(E('span', { class: 'hw-dial-line', style: 'color: ' + rxColor + ';' }, uwFormatted));
+					rxTxt.appendChild(E('span', { class: 'hw-dial-line', style: 'color: ' + rxQ.color + ';' }, (isNaN(rx) ? '--' : rx.toFixed(1)) + ' dBm'));
+					rxTxt.appendChild(E('span', { class: 'hw-dial-line', style: 'color: ' + rxQ.color + ';' }, uwFormatted));
 				} else if (self.unitSystem === 'imperial') {
 					var uw = toMicrowatts(rx);
 					var uwSingle = (uw < 1 ? uw.toFixed(2) : (uw >= 1000 ? (uw/1000).toFixed(2) : uw.toFixed(1))) + (uw >= 1000 ? ' mW' : ' µW');
-					rxTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + rxColor + ';' }, uwSingle));
+					rxTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + rxQ.color + ';' }, uwSingle));
 				} else {
-					rxTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + rxColor + ';' }, (isNaN(rx) ? '--' : rx.toFixed(1)) + ' dBm'));
+					rxTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + rxQ.color + ';' }, (isNaN(rx) ? '--' : rx.toFixed(1)) + ' dBm'));
 				}
 			}
 
 			if (rxPill) {
-				rxPill.textContent = rxStateBadge;
-				rxPill.style.color = rxColor;
-				rxPill.style.background = rxPillBg;
+				rxPill.textContent = rxQ.label;
+				rxPill.style.color = rxQ.color;
+				rxPill.style.background = rxQ.bg;
 			}
 
 			if (rxProg) {
 				rxProg.style.strokeDasharray = rxDash + ' ' + rxDial.circ;
-				rxProg.style.stroke = rxColor;
+				rxProg.style.stroke = rxQ.color;
 			}
 
 			if (rxStats) {
 				rxStats.innerHTML = '';
 				rxStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('Signal Status:')),
-					E('span', { class: 'hw-stat-value', style: 'color: ' + rxColor + ';' }, rxStateBadge)
+					E('span', { class: 'hw-stat-label' }, _('Signal Quality:')),
+					E('span', { class: 'hw-stat-value', style: 'color: ' + rxQ.color + '; font-weight: 700;' }, rxQ.badge)
 				]));
 				rxStats.appendChild(E('div', { class: 'hw-stat-row' }, [
 					E('span', { class: 'hw-stat-label' }, _('Calculated Power:')),
-					E('span', { class: 'hw-stat-value' }, fmtPower(rx))
+					E('span', { class: 'hw-stat-value', style: 'color: ' + rxQ.color + ';' }, fmtPower(rx))
 				]));
 				rxStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('Sensitivity Range:')),
-					E('span', { class: 'hw-stat-value' }, '-9.0 to -27.0 dBm')
+					E('span', { class: 'hw-stat-label' }, _('Optimal Range:')),
+					E('span', { class: 'hw-stat-value', style: 'color: #10b981;' }, '-12.0 to -24.0 dBm')
 				]));
 				rxStats.appendChild(E('div', { class: 'hw-stat-row' }, [
 					E('span', { class: 'hw-stat-label' }, _('RX Wavelength:')),
@@ -406,64 +506,51 @@ return view.extend({
 
 			var tempPct = Math.min(100, Math.max(0, (temp / 85.0) * 100));
 			var tempDash = (tempPct / 100) * tempDial.circ;
-			var tempColor = '#00acc1';
-			var tempStateBadge = 'NOMINAL';
-			var tempPillBg = 'rgba(0,172,193,0.15)';
-
-			if (temp >= 75) {
-				tempColor = '#e11d48';
-				tempStateBadge = 'HIGH TEMPERATURE';
-				tempPillBg = 'rgba(225,29,72,0.15)';
-			} else if (temp >= 68) {
-				tempColor = '#d97706';
-				tempStateBadge = 'ELEVATED';
-				tempPillBg = 'rgba(217,119,6,0.15)';
-			}
 
 			if (tempTxt) {
 				tempTxt.innerHTML = '';
 				if (self.unitSystem === 'dual') {
 					var cVal = isNaN(temp) ? '--' : temp.toFixed(1);
 					var fVal = isNaN(temp) ? '--' : toFahrenheit(temp).toFixed(1);
-					tempTxt.appendChild(E('span', { class: 'hw-dial-line', style: 'color: ' + tempColor + ';' }, cVal + ' °C'));
-					tempTxt.appendChild(E('span', { class: 'hw-dial-line', style: 'color: ' + tempColor + ';' }, fVal + ' °F'));
+					tempTxt.appendChild(E('span', { class: 'hw-dial-line', style: 'color: ' + tempQ.color + ';' }, cVal + ' °C'));
+					tempTxt.appendChild(E('span', { class: 'hw-dial-line', style: 'color: ' + tempQ.color + ';' }, fVal + ' °F'));
 				} else if (self.unitSystem === 'imperial') {
 					var fSingle = (isNaN(temp) ? '--' : toFahrenheit(temp).toFixed(1)) + ' °F';
-					tempTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + tempColor + ';' }, fSingle));
+					tempTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + tempQ.color + ';' }, fSingle));
 				} else {
 					var cSingle = (isNaN(temp) ? '--' : temp.toFixed(1)) + ' °C';
-					tempTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + tempColor + ';' }, cSingle));
+					tempTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + tempQ.color + ';' }, cSingle));
 				}
 			}
 
 			if (tempPill) {
-				tempPill.textContent = tempStateBadge;
-				tempPill.style.color = tempColor;
-				tempPill.style.background = tempPillBg;
+				tempPill.textContent = tempQ.label;
+				tempPill.style.color = tempQ.color;
+				tempPill.style.background = tempQ.bg;
 			}
 
 			if (tempProg) {
 				tempProg.style.strokeDasharray = tempDash + ' ' + tempDial.circ;
-				tempProg.style.stroke = tempColor;
+				tempProg.style.stroke = tempQ.color;
 			}
 
 			if (tempStats) {
 				tempStats.innerHTML = '';
 				tempStats.appendChild(E('div', { class: 'hw-stat-row' }, [
+					E('span', { class: 'hw-stat-label' }, _('Thermal Status:')),
+					E('span', { class: 'hw-stat-value', style: 'color: ' + tempQ.color + '; font-weight: 700;' }, tempQ.badge)
+				]));
+				tempStats.appendChild(E('div', { class: 'hw-stat-row' }, [
 					E('span', { class: 'hw-stat-label' }, _('Temperature (Dual):')),
-					E('span', { class: 'hw-stat-value' }, fmtTemp(temp))
+					E('span', { class: 'hw-stat-value', style: 'color: ' + tempQ.color + ';' }, fmtTemp(temp))
 				]));
 				tempStats.appendChild(E('div', { class: 'hw-stat-row' }, [
 					E('span', { class: 'hw-stat-label' }, _('Supply Voltage (VCC):')),
-					E('span', { class: 'hw-stat-value' }, volt.toFixed(2) + ' V')
+					E('span', { class: 'hw-stat-value', style: 'color: ' + voltQ.color + ';' }, volt.toFixed(2) + ' V')
 				]));
 				tempStats.appendChild(E('div', { class: 'hw-stat-row' }, [
 					E('span', { class: 'hw-stat-label' }, _('Laser Bias Current:')),
-					E('span', { class: 'hw-stat-value' }, bias.toFixed(1) + ' mA')
-				]));
-				tempStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('Maximum Rating:')),
-					E('span', { class: 'hw-stat-value' }, fmtTemp(85.0))
+					E('span', { class: 'hw-stat-value', style: 'color: ' + biasQ.color + ';' }, bias.toFixed(1) + ' mA')
 				]));
 			}
 
@@ -477,9 +564,9 @@ return view.extend({
 			var onuStateNum = parseInt(onuStateStr.replace(/[^0-9]/g, '')) || 1;
 			var onuPct = Math.min(100, Math.max(20, (onuStateNum / 5.0) * 100));
 			var onuDash = (onuPct / 100) * onuDial.circ;
-			var onuColor = (onuStateStr === 'O5') ? '#00acc1' : '#64748b';
-			var onuSubLabel = (onuStateStr === 'O5') ? 'OPERATIONAL' : 'ONU STANDBY';
-			var onuPillBg = (onuStateStr === 'O5') ? 'rgba(0,172,193,0.15)' : 'rgba(100,116,139,0.18)';
+			var onuColor = (onuStateStr === 'O5') ? '#10b981' : ((onuStateNum >= 2) ? '#f59e0b' : '#64748b');
+			var onuPillBg = (onuStateStr === 'O5') ? 'rgba(16,185,129,0.15)' : ((onuStateNum >= 2) ? 'rgba(245,158,11,0.15)' : 'rgba(100,116,139,0.18)');
+			var onuSubLabel = (onuStateStr === 'O5') ? _('O5 - OPERATIONAL') : ((onuStateNum >= 2) ? _('SYNCHRONIZING') : _('O1 - STANDBY'));
 
 			if (onuTxt) {
 				onuTxt.innerHTML = '';
@@ -499,11 +586,11 @@ return view.extend({
 				onuStats.innerHTML = '';
 				onuStats.appendChild(E('div', { class: 'hw-stat-row' }, [
 					E('span', { class: 'hw-stat-label' }, _('Registration Status:')),
-					E('span', { class: 'hw-stat-value', style: 'color: ' + (onuStateStr === 'O5' ? '#00acc1' : 'var(--text-color, inherit)') + ';' }, onu.registered_status || 'Not Registered')
+					E('span', { class: 'hw-stat-value', style: 'color: ' + onuColor + '; font-weight: 700;' }, onu.registered_status || (onuStateStr === 'O5' ? 'Registered (O5)' : 'Standby'))
 				]));
 				onuStats.appendChild(E('div', { class: 'hw-stat-row' }, [
 					E('span', { class: 'hw-stat-label' }, _('1G Port (In Use):')),
-					E('span', { class: 'hw-stat-value', style: 'color: #00acc1; font-weight: 700;' }, (dev.lan1g ? dev.lan1g : 'Up, 1000M Full'))
+					E('span', { class: 'hw-stat-value', style: 'color: #10b981; font-weight: 700;' }, (dev.lan1g ? dev.lan1g : 'Up, 1000M Full'))
 				]));
 				onuStats.appendChild(E('div', { class: 'hw-stat-row' }, [
 					E('span', { class: 'hw-stat-label' }, _('2.5G Port:')),
@@ -531,11 +618,19 @@ return view.extend({
 			setTxt('info-reg-state', onu.state_raw || 'Operation State (O5)');
 
 			// 5. Threshold Matrix Table
-			setTxt('th-rx-val', fmtPower(rx));
-			setTxt('th-temp-val', fmtTemp(temp));
-			setTxt('th-volt-val', isNaN(volt) ? '-- V' : volt.toFixed(2) + ' V');
-			setTxt('th-bias-val', isNaN(bias) ? '-- mA' : bias.toFixed(1) + ' mA');
-			setTxt('th-tx-val', (tx <= -35 ? 'Laser Inactive' : fmtPower(tx)));
+			var setTableVal = function(id, val, color) {
+				var el = document.getElementById(id);
+				if (el) {
+					el.textContent = val;
+					if (color) el.style.color = color;
+				}
+			};
+
+			setTableVal('th-rx-val', fmtPower(rx), rxQ.color);
+			setTableVal('th-temp-val', fmtTemp(temp), tempQ.color);
+			setTableVal('th-volt-val', isNaN(volt) ? '-- V' : volt.toFixed(2) + ' V', voltQ.color);
+			setTableVal('th-bias-val', isNaN(bias) ? '-- mA' : bias.toFixed(1) + ' mA', biasQ.color);
+			setTableVal('th-tx-val', (tx <= -35 ? 'Laser Inactive' : fmtPower(tx)), txQ.color);
 
 			// Threshold table headers / unit labels
 			if (self.unitSystem === 'imperial') {
@@ -555,27 +650,19 @@ return view.extend({
 				setTxt('th-temp-ha', '85.0 °C');
 			}
 
-			var trRxStat = document.getElementById('th-rx-status');
-			if (trRxStat) {
-				if (rx <= -35) {
-					trRxStat.innerHTML = '<span class="hw-temp-badge" style="background: rgba(100,116,139,0.18); color: #64748b;">' + _('No Signal') + '</span>';
-				} else if (rx < -27) {
-					trRxStat.innerHTML = '<span class="hw-temp-badge" style="background: rgba(217,119,6,0.15); color: #d97706;">' + _('Low Warning') + '</span>';
-				} else {
-					trRxStat.innerHTML = '<span class="hw-temp-badge" style="background: rgba(0,172,193,0.15); color: #00acc1;">' + _('Optimal') + '</span>';
+			var setStatusBadge = function(id, q) {
+				var el = document.getElementById(id);
+				if (el) {
+					var critClass = (q.severity === 'alarm') ? ' hw-temp-crit' : '';
+					el.innerHTML = '<span class="hw-temp-badge' + critClass + '" style="background: ' + q.bg + '; color: ' + q.color + '; font-weight: 700;">' + q.badge + '</span>';
 				}
-			}
+			};
 
-			var trTempStat = document.getElementById('th-temp-status');
-			if (trTempStat) {
-				if (temp >= 75) {
-					trTempStat.innerHTML = '<span class="hw-temp-badge hw-temp-crit" style="background: rgba(225,29,72,0.15); color: #e11d48;">' + _('High Alarm') + '</span>';
-				} else if (temp >= 68) {
-					trTempStat.innerHTML = '<span class="hw-temp-badge" style="background: rgba(217,119,6,0.15); color: #d97706;">' + _('Elevated') + '</span>';
-				} else {
-					trTempStat.innerHTML = '<span class="hw-temp-badge" style="background: rgba(0,172,193,0.15); color: #00acc1;">' + _('Nominal') + '</span>';
-				}
-			}
+			setStatusBadge('th-rx-status', rxQ);
+			setStatusBadge('th-temp-status', tempQ);
+			setStatusBadge('th-volt-status', voltQ);
+			setStatusBadge('th-bias-status', biasQ);
+			setStatusBadge('th-tx-status', txQ);
 		};
 
 		// Initial render populate
