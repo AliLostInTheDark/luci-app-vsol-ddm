@@ -283,17 +283,17 @@ return view.extend({
 				E('div', { class: 'hw-thermals-divider' }),
 				// Column 3: Network & Interface Status
 				E('div', { class: 'hw-thermals-col hw-thermals-col-right' }, [
-					E('div', { class: 'hw-thermals-title' }, _('Network & Ethernet Topology')),
+					E('div', { class: 'hw-thermals-title' }, _('Network & Ethernet Status')),
 					E('div', { class: 'hw-kv' }, [
-						E('span', { class: 'hw-kv-k' }, _('LAN 1G (Management):')),
-						E('span', { id: 'info-lan1', class: 'hw-kv-v', style: 'color: #00acc1; font-weight: 700;' }, 'Up, 1000M (Active This Router)')
+						E('span', { class: 'hw-kv-k' }, _('LAN 1G (Port 1):')),
+						E('span', { id: 'info-lan1', class: 'hw-kv-v', style: 'color: #00acc1; font-weight: 700;' }, 'Up, 1000M Full (In Use)')
 					]),
 					E('div', { class: 'hw-kv' }, [
-						E('span', { class: 'hw-kv-k' }, _('LAN 2.5G (Data Uplink):')),
-						E('span', { id: 'info-lan25', class: 'hw-kv-v' }, 'Up, 2.5G (External Router)')
+						E('span', { class: 'hw-kv-k' }, _('LAN 2.5G (Port 0):')),
+						E('span', { id: 'info-lan25', class: 'hw-kv-v' }, 'Up, 2.5G Full')
 					]),
 					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Module CPU Load:')), E('span', { id: 'info-cpu', class: 'hw-kv-v' }, '1%')]),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Management Interface:')), E('span', { class: 'hw-kv-v' }, 'Telnet CLI (192.168.100.1:23)')]),
+					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Management Link:')), E('span', { class: 'hw-kv-v' }, 'LAN 1G (Port 1)')]),
 					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Registration State:')), E('span', { id: 'info-reg-state', class: 'hw-kv-v', style: 'color: #00acc1; font-weight: 700;' }, 'Operation State (O5)')])
 				])
 			])
@@ -565,12 +565,12 @@ return view.extend({
 					E('span', { class: 'hw-stat-value', style: 'color: ' + (onuStateStr === 'O5' ? '#00acc1' : 'var(--text-color, inherit)') + ';' }, onu.registered_status || 'Not Registered')
 				]));
 				onuStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('Active Management:')),
-					E('span', { class: 'hw-stat-value', style: 'color: #00acc1; font-weight: 700;' }, 'LAN 1G (This Router)')
+					E('span', { class: 'hw-stat-label' }, _('1G Port (In Use):')),
+					E('span', { class: 'hw-stat-value', style: 'color: #00acc1; font-weight: 700;' }, (dev.lan1g ? dev.lan1g : 'Up, 1000M Full'))
 				]));
 				onuStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('Data Uplink:')),
-					E('span', { class: 'hw-stat-value' }, (dev.lan25g ? 'LAN 2.5G (' + dev.lan25g + ')' : 'LAN 2.5G (External)'))
+					E('span', { class: 'hw-stat-label' }, _('2.5G Port:')),
+					E('span', { class: 'hw-stat-value' }, (dev.lan25g ? dev.lan25g : 'Up, 2.5G Full'))
 				]));
 			}
 
@@ -588,8 +588,8 @@ return view.extend({
 			setTxt('info-bosa', ddm.part_number);
 			setTxt('info-fw', dev.firmware);
 			setTxt('info-bosa-vendor', ddm.vendor_name || 'Class B+ BOSA');
-			setTxt('info-lan1', (dev.lan1g ? dev.lan1g + ' (Active This Router)' : 'Up, 1000M (Active This Router)'));
-			setTxt('info-lan25', (dev.lan25g ? dev.lan25g + ' (External Router)' : 'Up, 2.5G (External Router)'));
+			setTxt('info-lan1', (dev.lan1g ? dev.lan1g + ' (In Use)' : 'Up, 1000M Full (In Use)'));
+			setTxt('info-lan25', (dev.lan25g ? dev.lan25g : 'Up, 2.5G Full'));
 			setTxt('info-cpu', dev.cpu_usage);
 			setTxt('info-reg-state', onu.state_raw || 'Operation State (O5)');
 
