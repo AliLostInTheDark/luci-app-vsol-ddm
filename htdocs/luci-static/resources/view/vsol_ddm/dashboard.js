@@ -70,12 +70,12 @@ return view.extend({
 			' .hw-card.half { flex: 1 1 calc(50% - 10px); align-items: stretch; }' +
 			' @media (max-width: 480px) { .hw-card { padding: 15px; } .hw-card.half { flex-basis: 100%; } .hw-dial { transform: scale(0.9); } }' +
 			' .hw-card h3 { margin: 0 0 16px 0; font-size: 1.05em; color: var(--text-color, inherit); opacity: 0.85; text-transform: uppercase; letter-spacing: 1px; text-align: center; word-break: break-word; line-height: 1.3; font-weight: 700; }' +
-			' .hw-dial { position: relative; width: 160px; height: 160px; display: flex; align-items: center; justify-content: center; margin: 4px auto 0 auto; background: transparent !important; }' +
-			' .hw-dial svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform: rotate(-90deg); background: transparent !important; }' +
+			' .hw-dial { position: relative; width: 160px; height: 160px; display: flex; align-items: center; justify-content: center; margin: 0 auto; background: transparent !important; }' +
+			' .hw-dial svg { position: absolute; top: 0; left: 0; width: 160px; height: 160px; transform: rotate(-90deg); background: transparent !important; }' +
 			' .hw-dial-bg { fill: none; stroke: var(--border-color, rgba(128, 128, 128, 0.2)); stroke-width: 10; }' +
 			' .hw-dial-progress { fill: none; stroke-width: 10; stroke-linecap: round; transition: stroke-dasharray 0.5s ease, stroke 0.5s ease; }' +
-			' .hw-dial-center { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; text-align: center; pointer-events: none; }' +
-			' .hw-dial-line { font-size: 1.25em; font-weight: 700; letter-spacing: -0.3px; line-height: 1.25; white-space: nowrap; }' +
+			' .hw-dial-center { position: absolute; top: 0; left: 0; width: 160px; height: 160px; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; text-align: center; pointer-events: none; box-sizing: border-box; padding: 0 5px; }' +
+			' .hw-dial-line { font-size: 1.16em; font-weight: 700; letter-spacing: -0.3px; line-height: 1.25; white-space: nowrap; }' +
 			' .hw-dial-single { font-size: 1.32em; font-weight: 700; letter-spacing: -0.3px; line-height: 1.2; white-space: nowrap; }' +
 			' .hw-status-pill { margin-top: 10px; margin-bottom: 12px; padding: 4px 14px; border-radius: 9999px; font-size: 0.76em; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; display: inline-flex; align-items: center; justify-content: center; text-align: center; white-space: nowrap; }' +
 			' .hw-stats-list { width: 100%; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-color, rgba(128, 128, 128, 0.12)); padding-top: 14px; margin-top: 2px; }' +
@@ -125,9 +125,9 @@ return view.extend({
 			return dbm.toFixed(2) + ' dBm';
 		};
 
-		// hw-dashboard standard Uptime formatter (e.g. 2d 14h 50m)
+		// Standard Uptime Formatter (e.g. 2d 14h 50m or 8h 19m)
 		var formatUptime = function(upRaw) {
-			if (!upRaw) return '--';
+			if (!upRaw || upRaw === '--') return '--';
 			if (typeof upRaw === 'number' || /^\d+$/.test(String(upRaw).trim())) {
 				var sec = parseInt(upRaw);
 				var days = Math.floor(sec / 86400);
@@ -139,7 +139,7 @@ return view.extend({
 				out += mins + 'm';
 				return out || '0m';
 			}
-			// Handle "0 8:4:50" or "0 days, 08:04:50"
+			// Handle "0 8:19:55" or "0 days, 8:19:55"
 			var m = String(upRaw).match(/(?:(\d+)\s*(?:days?)?,?\s*)?(\d+):(\d+)(?::(\d+))?/i);
 			if (m) {
 				var days = parseInt(m[1]) || 0;
@@ -216,9 +216,9 @@ return view.extend({
 
 			var svgContainer = E('div', {
 				id: 'dial-svg-' + id,
-				style: 'position:absolute; top:0; left:0; width:100%; height:100%; background:transparent !important;'
+				style: 'position:absolute; top:0; left:0; width:160px; height:160px; background:transparent !important;'
 			});
-			svgContainer.innerHTML = '<svg viewBox="0 0 160 160" style="background:transparent !important;">' +
+			svgContainer.innerHTML = '<svg viewBox="0 0 160 160" style="background:transparent !important; width:160px; height:160px;">' +
 				'<circle class="hw-dial-bg" cx="80" cy="80" r="' + radius + '"/>' +
 				'<circle id="dial-prog-' + id + '" class="hw-dial-progress" cx="80" cy="80" r="' + radius + '" style="stroke: #00acc1; stroke-dasharray: 0 ' + circumference + ';"/>' +
 				'</svg>';
@@ -271,7 +271,7 @@ return view.extend({
 					E('div', { class: 'hw-thermals-title' }, _('Device Identification')),
 					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Model:')), E('span', { id: 'info-model', class: 'hw-kv-v' }, 'V2802RH')]),
 					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Vendor:')), E('span', { id: 'info-vendor', class: 'hw-kv-v' }, 'VSOL')]),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('GPON SN:')), E('span', { id: 'info-sn', class: 'hw-kv-v' }, 'NKOT 0x2f04917e')]),
+					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('GPON SN:')), E('span', { id: 'info-sn', class: 'hw-kv-v', style: 'color: #00acc1; font-weight: 700;' }, 'NKOT2F04917E')]),
 					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('MAC Address:')), E('span', { id: 'info-mac', class: 'hw-kv-v' }, 'B4:64:15:31:71:25')]),
 					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Hardware Revision:')), E('span', { id: 'info-hw', class: 'hw-kv-v' }, '8671x')]),
 					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('System Uptime:')), E('span', { id: 'info-uptime', class: 'hw-kv-v' }, '--')])
@@ -285,7 +285,7 @@ return view.extend({
 					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Optical Interface:')), E('span', { class: 'hw-kv-v' }, 'SC-APC (Single Mode)')]),
 					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Standard Compliance:')), E('span', { class: 'hw-kv-v' }, 'ITU-T G.984 / SFF-8472')]),
 					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Firmware Version:')), E('span', { id: 'info-fw', class: 'hw-kv-v' }, 'V1.1.8')]),
-					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('BOSA Module Vendor:')), E('span', { id: 'info-bosa-vendor', class: 'hw-kv-v' }, 'ONU_B+_G')])
+					E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Transceiver Class:')), E('span', { id: 'info-bosa-vendor', class: 'hw-kv-v' }, 'Class B+ BOSA')])
 				]),
 				E('div', { class: 'hw-thermals-divider' }),
 				// Column 3: Traffic & Network Performance
@@ -582,17 +582,17 @@ return view.extend({
 			};
 			setTxt('info-model', dev.model);
 			setTxt('info-vendor', dev.vendor);
-			setTxt('info-sn', onu.serial_number);
+			setTxt('info-sn', (onu.serial_number || dev.gpon_sn || 'NKOT2F04917E'));
 			setTxt('info-mac', dev.mac);
 			setTxt('info-hw', dev.hardware);
 			setTxt('info-uptime', formatUptime(dev.uptime));
 			setTxt('info-bosa', ddm.part_number);
 			setTxt('info-fw', dev.firmware);
-			setTxt('info-bosa-vendor', ddm.vendor_name);
+			setTxt('info-bosa-vendor', ddm.vendor_name || 'Class B+ BOSA');
 			setTxt('info-lan25', dev.lan25g);
 			setTxt('info-lan1', dev.lan1g);
 			setTxt('info-cpu', dev.cpu_usage);
-			setTxt('info-reg-state', onu.state_raw || 'Operation State(O5)');
+			setTxt('info-reg-state', onu.state_raw || 'Operation State (O5)');
 
 			// 5. Threshold Matrix Table
 			setTxt('th-rx-val', fmtPower(rx));

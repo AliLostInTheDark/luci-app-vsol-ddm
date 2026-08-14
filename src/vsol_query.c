@@ -31,6 +31,11 @@ static void trim(char *s) {
     if (p != s) memmove(s, p, strlen(p) + 1);
 }
 
+static void str_toupper(char *s) {
+    if (!s) return;
+    for (; *s; s++) *s = toupper((unsigned char)*s);
+}
+
 static int set_sock_timeout(int sock, int sec, int usec) {
     struct timeval tv;
     tv.tv_sec = sec;
@@ -206,10 +211,10 @@ int main(int argc, char *argv[]) {
     char vendor_name[64] = "VSOL";
     char part_number[64] = "GN25L95";
     char onu_state[64] = "O5";
-    char onu_state_raw[128] = "Operation State(O5)";
-    char serial_number[128] = "NKOT 0x2f04917e";
+    char onu_state_raw[128] = "Operation State (O5)";
+    char serial_number[128] = "NKOT2F04917E";
     char mac_address[64] = "B4:64:15:31:71:25";
-    char uptime[128] = "0 8:4:13";
+    char uptime[128] = "--";
     char firmware[64] = "V1.1.8";
     char hardware[64] = "8671x";
     char cpu_usage[32] = "1%";
@@ -225,36 +230,70 @@ int main(int argc, char *argv[]) {
     if ((p = strstr(buf, "Bias Current:"))) sscanf(p, "Bias Current: %lf", &bias_ma);
 
     if ((p = strstr(buf, "Vendor Name:"))) {
-        sscanf(p, "Vendor Name: %63[^\r\n]", vendor_name);
-        trim(vendor_name);
+        char vraw[64] = {0};
+        sscanf(p, "Vendor Name: %63[^\r\n]", vraw);
+        trim(vraw);
+        if (strstr(vraw, "ONU_B+_G") || strstr(vraw, "B+")) snprintf(vendor_name, sizeof(vendor_name), "VSOL (Class B+)");
+        else if (strlen(vraw) > 0) snprintf(vendor_name, sizeof(vendor_name), "%s", vraw);
     }
     if ((p = strstr(buf, "Part Number:"))) {
         sscanf(p, "Part Number: %63[^\r\n]", part_number);
         trim(part_number);
     }
     if ((p = strstr(buf, "ONU state:"))) {
-        sscanf(p, "ONU state: %127[^\r\n]", onu_state_raw);
-        trim(onu_state_raw);
-        if (strstr(onu_state_raw, "O5")) strcpy(onu_state, "O5");
-        else if (strstr(onu_state_raw, "O4")) strcpy(onu_state, "O4");
-        else if (strstr(onu_state_raw, "O3")) strcpy(onu_state, "O3");
-        else if (strstr(onu_state_raw, "O2")) strcpy(onu_state, "O2");
-        else if (strstr(onu_state_raw, "O1")) strcpy(onu_state, "O1");
+        char sraw[128] = {0};
+        sscanf(p, "ONU state: %127[^\r\n]", sraw);
+        trim(sraw);
+        if (strstr(sraw, "O5")) {
+            strcpy(onu_state, "O5");
+            strcpy(onu_state_raw, "Operation State (O5)");
+        } else if (strstr(sraw, "O4")) {
+            strcpy(onu_state, "O4");
+            strcpy(onu_state_raw, "Ranging State (O4)");
+        } else if (strstr(sraw, "O3")) {
+            strcpy(onu_state, "O3");
+            strcpy(onu_state_raw, "Serial Number State (O3)");
+        } else if (strstr(sraw, "O2")) {
+            strcpy(onu_state, "O2");
+            strcpy(onu_state_raw, "Standby State (O2)");
+        } else {
+            strcpy(onu_state, "O1");
+            strcpy(onu_state_raw, "Initial State (O1)");
+        }
     }
+
+    // Standard ITU-T G.984 GPON Serial Number format: VENDOR + 8-char hex (e.g. NKOT2F04917E)
     if ((p = strstr(buf, "serial number:"))) {
-        sscanf(p, "serial number: %127[^\r\n]", serial_number);
-        trim(serial_number);
+        char vtag[32] = {0}, htag[32] = {0};
+        if (sscanf(p, "serial number: %31s 0x%31s", vtag, htag) == 2 ||
+            sscanf(p, "serial number: %31s %31s", vtag, htag) == 2) {
+            str_toupper(vtag);
+            str_toupper(htag);
+            if (strncmp(htag, "0X", 2) == 0) memmove(htag, htag + 2, strlen(htag) - 1);
+            snprintf(serial_number, sizeof(serial_number), "%s%s", vtag, htag);
+        }
     }
+
     if ((p = strstr(buf, "MAC Address:"))) {
         sscanf(p, "MAC Address: %63s", mac_address);
         trim(mac_address);
     }
+
+    // Parse SysUpTime: "0 8:19:55" -> "8h 19m"
     if ((p = strstr(buf, "SysUpTime:"))) {
-        sscanf(p, "SysUpTime: %127[^\r\n]", uptime);
-        char *sn_cut = strstr(uptime, "Serial Number");
-        if (sn_cut) *sn_cut = '\0';
-        trim(uptime);
+        int u_days = 0, u_hrs = 0, u_mins = 0, u_secs = 0;
+        char *line_start = p + strlen("SysUpTime:");
+        while (*line_start == ' ' || *line_start == '\t') line_start++;
+        if (sscanf(line_start, "%d %d:%d:%d", &u_days, &u_hrs, &u_mins, &u_secs) >= 3 ||
+            sscanf(line_start, "%d:%d:%d", &u_hrs, &u_mins, &u_secs) >= 2) {
+            char ubuf[64] = {0};
+            if (u_days > 0) snprintf(ubuf + strlen(ubuf), sizeof(ubuf) - strlen(ubuf), "%dd ", u_days);
+            if (u_hrs > 0 || u_days > 0) snprintf(ubuf + strlen(ubuf), sizeof(ubuf) - strlen(ubuf), "%dh ", u_hrs);
+            snprintf(ubuf + strlen(ubuf), sizeof(ubuf) - strlen(ubuf), "%dm", u_mins);
+            snprintf(uptime, sizeof(uptime), "%s", ubuf);
+        }
     }
+
     if ((p = strstr(buf, "Application Version:"))) {
         sscanf(p, "Application Version: %63s", firmware);
         trim(firmware);
