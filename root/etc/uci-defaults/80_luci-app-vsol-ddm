@@ -38,4 +38,9 @@ uci -q commit ${CFG}
 # Flush LuCI and rpcd caches so the new view and ACL are picked up.
 rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache* /tmp/vsol_ddm_cache.json /tmp/luci-sessions/*
 
+if [ -f /etc/init.d/vsol_ddm ]; then
+	/etc/init.d/vsol_ddm enable >/dev/null 2>&1 || true
+	/etc/init.d/vsol_ddm restart >/dev/null 2>&1 || true
+fi
+
 exit 0

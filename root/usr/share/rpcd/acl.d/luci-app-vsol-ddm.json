@@ -6,6 +6,7 @@
 				"vsol_ddm": [
 					"get_status",
 					"get_info",
+					"get_history",
 					"test_connection",
 					"get_omci"
 				]

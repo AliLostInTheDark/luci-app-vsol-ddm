@@ -63,6 +63,9 @@ define Package/luci-app-vsol-ddm/install
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/vsol_ddm
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/view/vsol_ddm/* $(1)/www/luci-static/resources/view/vsol_ddm/
 
+	$(INSTALL_DIR) $(1)/etc/init.d
+	$(INSTALL_BIN) ./root/etc/init.d/* $(1)/etc/init.d/
+
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./root/etc/config/vsol_ddm $(1)/etc/config/vsol_ddm
 

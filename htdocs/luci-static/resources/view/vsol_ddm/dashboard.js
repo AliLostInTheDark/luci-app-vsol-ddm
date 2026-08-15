@@ -20,6 +20,12 @@ var callGetOmci = rpc.declare({
 	expect: {}
 });
 
+var callGetHistory = rpc.declare({
+	object: 'vsol_ddm',
+	method: 'get_history',
+	expect: {}
+});
+
 var callRestart = rpc.declare({
 	object: 'vsol_ddm',
 	method: 'restart',
@@ -177,13 +183,15 @@ return view.extend({
 	load: function() {
 		return Promise.all([
 			uci.load('vsol_ddm'),
-			callGetStatus()
+			callGetStatus(),
+			L.resolveDefault(callGetHistory(), {})
 		]);
 	},
 
 	render: function(data) {
 		var self = this;
 		var initialStatus = data[1] || {};
+		var initialHistory = data[2] || {};
 
 		/* Polling interval is clamped to 1..60 seconds. */
 		var pollInterval = parseInt(uci.get('vsol_ddm', 'main', 'poll_interval'), 10);
@@ -665,8 +673,8 @@ return view.extend({
 		container.appendChild(txDial.node);
 		container.appendChild(tempDial.node);
 
-		/* ---------------- Live Time-Series Chart Component ------------- */
-		var MAX_CHART_SAMPLES = 40;
+		/* ---------------- 24-Hour Historical Time-Series Charts ------------- */
+		var MAX_CHART_SAMPLES = 1440;
 		var chartHistories = {
 			rx: [],
 			tx: [],
@@ -674,29 +682,44 @@ return view.extend({
 			bias: []
 		};
 
+		if (initialHistory && Array.isArray(initialHistory.history)) {
+			var hist = initialHistory.history;
+			for (var h = 0; h < hist.length; h++) {
+				var item = hist[h];
+				if (Array.isArray(item) && item.length >= 5) {
+					var ts = item[0] * 1000;
+					if (item[1] !== null && isFinite(item[1])) chartHistories.rx.push({ time: ts, val: item[1] });
+					if (item[2] !== null && isFinite(item[2])) chartHistories.tx.push({ time: ts, val: item[2] });
+					if (item[3] !== null && isFinite(item[3])) chartHistories.temp.push({ time: ts, val: item[3] });
+					if (item[4] !== null && isFinite(item[4])) chartHistories.bias.push({ time: ts, val: item[4] });
+				}
+			}
+		}
+
 		var createChartCard = function(key, title, unit, color, minFixed, maxFixed) {
 			var canvas = E('canvas', {
 				id: 'hw-chart-' + key,
 				class: 'hw-chart-canvas',
-				style: 'width: 100%; height: 140px; display: block;'
+				style: 'width: 100%; height: 160px; display: block;'
 			});
 
 			var curVal = E('span', { id: 'hw-chart-cur-' + key, class: 'hw-chart-val', style: 'color: ' + color + ';' }, '--');
 			var minVal = E('span', { id: 'hw-chart-min-' + key, class: 'hw-chart-val-sub' }, 'Min: --');
 			var maxVal = E('span', { id: 'hw-chart-max-' + key, class: 'hw-chart-val-sub' }, 'Max: --');
+			var avgVal = E('span', { id: 'hw-chart-avg-' + key, class: 'hw-chart-val-sub' }, 'Avg: --');
 
 			var card = E('div', { class: 'hw-card half hw-chart-card' }, [
 				E('div', { class: 'hw-chart-header' }, [
 					E('div', {}, [
 						E('h3', { style: 'text-align: left; margin: 0 0 2px 0;' }, title),
-						E('div', { class: 'hw-card-sub', style: 'text-align: left; margin: 0;' }, _('Live Telemetry History') + ' (' + unit + ')')
+						E('div', { class: 'hw-card-sub', style: 'text-align: left; margin: 0;' }, _('24-Hour Historical Trend') + ' (' + unit + ')')
 					]),
 					E('div', { class: 'hw-chart-metrics' }, [
 						curVal,
-						E('div', { class: 'hw-chart-submetrics' }, [minVal, maxVal])
+						E('div', { class: 'hw-chart-submetrics' }, [minVal, avgVal, maxVal])
 					])
 				]),
-				E('div', { style: 'position: relative; width: 100%; height: 140px; margin-top: 10px;' }, [canvas])
+				E('div', { style: 'position: relative; width: 100%; height: 160px; margin-top: 10px;' }, [canvas])
 			]);
 
 			return {
@@ -1078,7 +1101,7 @@ return view.extend({
 			var dpr = window.devicePixelRatio || 1;
 			var rect = canvas.getBoundingClientRect();
 			var width = rect.width || 300;
-			var height = rect.height || 140;
+			var height = rect.height || 160;
 
 			if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
 				canvas.width = Math.round(width * dpr);
@@ -1089,10 +1112,10 @@ return view.extend({
 			ctx.scale(dpr, dpr);
 			ctx.clearRect(0, 0, width, height);
 
-			var padL = 38;
-			var padR = 10;
-			var padT = 10;
-			var padB = 16;
+			var padL = 42;
+			var padR = 14;
+			var padT = 12;
+			var padB = 22;
 			var plotW = width - padL - padR;
 			var plotH = height - padT - padB;
 
@@ -1105,24 +1128,33 @@ return view.extend({
 			var curEl = document.getElementById('hw-chart-cur-' + chartObj.key);
 			var minEl = document.getElementById('hw-chart-min-' + chartObj.key);
 			var maxEl = document.getElementById('hw-chart-max-' + chartObj.key);
+			var avgEl = document.getElementById('hw-chart-avg-' + chartObj.key);
 
 			if (!valid.length) {
 				if (curEl) curEl.textContent = '--';
 				if (minEl) minEl.textContent = 'Min: --';
 				if (maxEl) maxEl.textContent = 'Max: --';
+				if (avgEl) avgEl.textContent = 'Avg: --';
 				ctx.fillStyle = 'rgba(128,128,128,0.3)';
 				ctx.font = '12px system-ui, sans-serif';
 				ctx.textAlign = 'center';
-				ctx.fillText(_('Waiting for samples...'), padL + plotW / 2, padT + plotH / 2);
+				ctx.fillText(_('Waiting for telemetry samples...'), padL + plotW / 2, padT + plotH / 2);
 				ctx.restore();
 				return;
 			}
 
-			var minVal = Infinity, maxVal = -Infinity;
+			var minVal = Infinity, maxVal = -Infinity, sum = 0;
+			var minTime = Infinity, maxTime = -Infinity;
 			for (var i = 0; i < valid.length; i++) {
-				if (valid[i].val < minVal) minVal = valid[i].val;
-				if (valid[i].val > maxVal) maxVal = valid[i].val;
+				var v = valid[i].val;
+				var t = valid[i].time || 0;
+				if (v < minVal) minVal = v;
+				if (v > maxVal) maxVal = v;
+				sum += v;
+				if (t < minTime) minTime = t;
+				if (t > maxTime) maxTime = t;
 			}
+			var avgValNum = sum / valid.length;
 
 			if (chartObj.minFixed != null) minVal = Math.min(minVal, chartObj.minFixed);
 			if (chartObj.maxFixed != null) maxVal = Math.max(maxVal, chartObj.maxFixed);
@@ -1143,6 +1175,7 @@ return view.extend({
 			if (curEl) curEl.textContent = latest.toFixed(2) + ' ' + chartObj.unit;
 			if (minEl) minEl.textContent = 'Min: ' + minVal.toFixed(1);
 			if (maxEl) maxEl.textContent = 'Max: ' + maxVal.toFixed(1);
+			if (avgEl) avgEl.textContent = 'Avg: ' + avgValNum.toFixed(1);
 
 			// Draw Grid lines & Y labels
 			ctx.strokeStyle = 'rgba(128, 128, 128, 0.12)';
@@ -1160,6 +1193,21 @@ return view.extend({
 				ctx.lineTo(padL + plotW, gy);
 				ctx.stroke();
 				ctx.fillText(gVal.toFixed(1), padL - 5, gy + 3);
+			}
+
+			// Draw X-axis timeline marks
+			ctx.textAlign = 'center';
+			var timeSpan = (maxTime > minTime) ? (maxTime - minTime) : 0;
+			var xSteps = 4;
+			for (var xs = 0; xs <= xSteps; xs++) {
+				var xx = padL + (plotW * xs / xSteps);
+				var curT = minTime + (timeSpan * xs / xSteps);
+				var dObj = new Date(curT);
+				var hh = ('0' + dObj.getHours()).slice(-2);
+				var mm = ('0' + dObj.getMinutes()).slice(-2);
+				var lbl = (xs === xSteps) ? _('Now') : (hh + ':' + mm);
+				if (timeSpan < 120000 && xs < xSteps) lbl = '-' + Math.round((maxTime - curT) / 1000) + 's';
+				ctx.fillText(lbl, xx, padT + plotH + 15);
 			}
 
 			// Threshold guide lines (dashed)
@@ -1186,14 +1234,17 @@ return view.extend({
 				ctx.restore();
 			}
 
-			// Plot line & Area
+			// Plot points mapped by timeline
 			var points = [];
-			var totalSlots = MAX_CHART_SAMPLES;
-			var n = dataHistory.length;
+			var n = valid.length;
 			for (var p = 0; p < n; p++) {
-				var item = dataHistory[p];
-				if (item == null || !isFinite(item.val)) continue;
-				var px = padL + (p / (totalSlots - 1)) * plotW;
+				var item = valid[p];
+				var px;
+				if (timeSpan > 0) {
+					px = padL + ((item.time - minTime) / timeSpan) * plotW;
+				} else {
+					px = padL + (p / Math.max(1, n - 1)) * plotW;
+				}
 				var py = padT + plotH * (1 - (item.val - yMin) / (yMax - yMin));
 				points.push({ x: px, y: py, val: item.val });
 			}
