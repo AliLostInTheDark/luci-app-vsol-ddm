@@ -865,12 +865,30 @@ return view.extend({
 			for (var k in inst) {
 				if (k === 'rules' || k === 'lines') continue;
 				var v = inst[k];
-				if (v === '' || v == null) v = '--';
-				/* Vendor IDs are four packed ASCII bytes: 0x414c434c is "ALCL". */
+				if (v === '' || v == null || v === '0x000000' || (k === 'DscpToPbitMapping' && (!v || v === '--'))) continue;
+
+				/* Decode OltVendorId ASCII e.g. 0x414c434c -> ALCL (Alcatel-Lucent / Nokia) */
 				if (k === 'OltVendorId') {
 					var ascii = hexToAscii(inst[k]);
-					if (ascii) v = inst[k] + '  (' + ascii + ')';
+					if (ascii) {
+						var vendorDesc = (ascii === 'ALCL') ? 'ALCL (Alcatel-Lucent / Nokia)' : (ascii === 'HWTC' ? 'HWTC (Huawei)' : (ascii === 'ZTEG' ? 'ZTEG (ZTE)' : ascii));
+						v = vendorDesc + ' [' + inst[k] + ']';
+					}
 				}
+
+				/* Decode AssociatedMePoint in ME 171 to human-readable interface */
+				if (k === 'AssociatedMePoint') {
+					var pointNum = parseInt(v, 16);
+					if (!isNaN(pointNum)) {
+						var ifName = '';
+						if ((pointNum & 0x0100) !== 0) ifName = 'LAN Port ' + (pointNum & 0x00ff);
+						else if ((pointNum & 0x0600) !== 0 || (pointNum & 0x0e00) !== 0) ifName = 'VEIP (Virtual Ethernet)';
+						else if ((pointNum & 0x4000) !== 0) ifName = 'PPP Connection';
+						else if ((pointNum & 0xff00) !== 0) ifName = 'POTS / Voice';
+						if (ifName) v = v + ' (' + ifName + ')';
+					}
+				}
+
 				rows.push(E('div', { class: 'hw-kv' }, [
 					E('span', { class: 'hw-kv-k' }, k),
 					E('span', { class: 'hw-kv-v' }, String(v))
@@ -884,10 +902,10 @@ return view.extend({
 				E('table', { class: 'hw-omci-tbl' }, [
 					E('thead', {}, [E('tr', {}, [
 						E('th', {}, _('#')),
-						E('th', {}, _('Filter outer')),
-						E('th', {}, _('Filter inner')),
-						E('th', {}, _('Treatment outer')),
-						E('th', {}, _('Treatment inner'))
+						E('th', {}, _('Filter Outer')),
+						E('th', {}, _('Filter Inner')),
+						E('th', {}, _('Treatment Outer')),
+						E('th', {}, _('Treatment Inner'))
 					])]),
 					E('tbody', {}, rules.map(function(r) {
 						return E('tr', {}, [
@@ -923,8 +941,11 @@ return view.extend({
 						];
 						if (inst.rules && inst.rules.length)
 							kids.push(omciRulesTable(inst.rules));
-						if (inst.lines && inst.lines.length)
-							kids.push(E('div', { class: 'hw-kv-grid' }, inst.lines.map(function(line) {
+						var validLines = (inst.lines || []).filter(function(line) {
+							return line && !/^0x0+$/i.test(line.trim()) && line.trim() !== '0x000000';
+						});
+						if (validLines.length)
+							kids.push(E('div', { class: 'hw-kv-grid' }, validLines.map(function(line) {
 								return E('div', { class: 'hw-kv' }, [
 									E('span', { class: 'hw-kv-v' }, line)
 								]);

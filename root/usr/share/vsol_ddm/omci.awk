@@ -189,12 +189,12 @@ banner == 1 {
 	next
 }
 
-# Indented continuation lines (DscpToPbitMapping entries, ToDInfo detail).
+# Indented continuation lines (ToDInfo detail, non-zero tables). Filter out all-zero hex lines like 0x000000.
 /^[ \t]+[^ \t]/ {
 	if (me == "")
 		next
 	val = trim($0)
-	if (val == "")
+	if (val == "" || val ~ /^0x0+$/ || val ~ /^0+$/)
 		next
 	if (lcount++) lines = lines ","
 	lines = lines "\"" esc(val) "\""
