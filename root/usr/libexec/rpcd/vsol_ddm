@@ -303,14 +303,125 @@ test_connection() {
 	fi
 }
 
+# Managed entities rendered by the dashboard, in card order.
+#   11  EthUni                 physical Ethernet UNI ports
+#   84  VlanTagFilterData      the VLANs the ONT accepts
+#  131  OltG                   OLT vendor identification
+#  171  ExtVlanTagOperCfgData  VLAN tagging/translation rules
+#  329  VEIP                   virtual Ethernet interface point
+OMCI_CLASSES="11,84,131,171,329"
+OMCI_PARSER="/usr/share/vsol_ddm/omci.awk"
+OMCI_CACHE="/tmp/vsol_ddm_omci.json"
+
+# Per-command settle time. ME 171 alone emits a few hundred lines and the ONT
+# echoes them slowly, so commands are paced rather than pipelined blind; the
+# whole exchange is still bounded by OMCI_TIMEOUT below.
+OMCI_STEP=3
+OMCI_TIMEOUT=25
+
+# OMCI state is configuration, not telemetry: it changes when the OLT reprovisions
+# the ONT, not between polls. Caching it for a minute keeps this off the 3-second
+# telemetry path, which matters because the ONT accepts only about two concurrent
+# telnet sessions and this query holds one for the better part of 20 seconds.
+OMCI_CACHE_TTL=60
+
+# Read the OMCI managed entities. Unlike do_query this stays at the top-level
+# CLI prompt (AP#) instead of entering the RTK diag shell, because omcicli is a
+# top-level command.
+fetch_omci() {
+	get_config
+
+	if [ "$ENABLED" != "1" ]; then
+		printf '{"success": false, "connected": false, "host": "%s", "error": "Monitoring has been disabled in configuration"}\n' "$HOST"
+		return
+	fi
+
+	if [ ! -f "$OMCI_PARSER" ]; then
+		printf '{"success": false, "connected": false, "host": "%s", "error": "parser %s is missing from the installation"}\n' \
+			"$HOST" "$OMCI_PARSER"
+		return
+	fi
+
+	if [ -f "$OMCI_CACHE" ] && [ -n "$(find "$OMCI_CACHE" -mmin -1 2>/dev/null)" ]; then
+		cat "$OMCI_CACHE"
+		return
+	fi
+
+	_raw=$( {
+		printf '%s\r\n%s\r\n' "$USER" "$PASS"
+		sleep 2
+		for _class in $(echo "$OMCI_CLASSES" | tr ',' ' '); do
+			printf 'omcicli mib get %s\r\n' "$_class"
+			sleep "$OMCI_STEP"
+		done
+		printf 'exit\r\n'
+		sleep 1
+	} | timeout "$OMCI_TIMEOUT" nc "$HOST" "$PORT" 2>/dev/null |
+	    tr -d '\377\376\375\374\373\372\371\r' )
+
+	# The top-level prompt confirms we authenticated and reached the CLI.
+	case "$_raw" in
+		*"AP#"*) ;;
+		*)
+			printf '{"success": false, "connected": false, "host": "%s", "error": "Unable to reach the ONT CLI at %s:%s"}\n' \
+				"$HOST" "$HOST" "$PORT"
+			return
+			;;
+	esac
+
+	_out=$(printf '%s\n' "$_raw" | awk \
+		-v host="$HOST" -v ts="$(date +%s)" -v classes="$OMCI_CLASSES" \
+		-f "$OMCI_PARSER")
+
+	case "$_out" in
+		*'"me":{"'*)
+			printf '%s\n' "$_out" > "$OMCI_CACHE" 2>/dev/null
+			printf '%s\n' "$_out"
+			;;
+		*)
+			printf '{"success": false, "connected": true, "host": "%s", "error": "The ONT replied but no managed entities could be parsed"}\n' "$HOST"
+			;;
+	esac
+}
+
+# Warm-restart the ONT. `restart` is the VSOL CLI's own reboot command
+# ("Halt and perform a warm restart"); the trailing y answers a confirmation
+# prompt if the firmware asks for one, and is an unknown command otherwise.
+#
+# The ONT drops the session as it goes down, so a read timeout here is the
+# expected outcome rather than a failure, and the stale OMCI cache is dropped
+# so the dashboard repopulates from the rebooted ONT.
+do_restart() {
+	get_config
+
+	{
+		printf '%s\r\n%s\r\n' "$USER" "$PASS"
+		sleep 2
+		printf 'restart\r\n'
+		sleep 1
+		printf 'y\r\n'
+		sleep 1
+	} | timeout "$TIMEOUT" nc "$HOST" "$PORT" >/dev/null 2>&1
+
+	rm -f "$OMCI_CACHE" "$CACHE_FILE" 2>/dev/null
+
+	printf '{"success": true, "host": "%s", "message": "Restart command sent to the ONT. It will be unreachable for about a minute."}\n' "$HOST"
+}
+
 case "$1" in
 	list)
-		echo '{ "get_status": {}, "get_info": {}, "test_connection": {} }'
+		echo '{ "get_status": {}, "get_info": {}, "test_connection": {}, "get_omci": {}, "restart": {} }'
 		;;
 	call)
 		case "$2" in
 			get_status|get_info)
 				fetch_telemetry
+				;;
+			get_omci)
+				fetch_omci
+				;;
+			restart)
+				do_restart
 				;;
 			test_connection)
 				test_connection

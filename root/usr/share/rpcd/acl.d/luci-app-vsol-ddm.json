@@ -1,12 +1,13 @@
 {
 	"luci-app-vsol-ddm": {
-		"description": "Allow LuCI to read VSOL V2802RH DDM diagnostics and test connection",
+		"description": "Allow LuCI to read VSOL V2802RH DDM diagnostics, OMCI managed entities, and test connection",
 		"read": {
 			"ubus": {
 				"vsol_ddm": [
 					"get_status",
 					"get_info",
-					"test_connection"
+					"test_connection",
+					"get_omci"
 				]
 			},
 			"uci": [
@@ -14,6 +15,11 @@
 			]
 		},
 		"write": {
+			"ubus": {
+				"vsol_ddm": [
+					"restart"
+				]
+			},
 			"uci": [
 				"vsol_ddm"
 			]

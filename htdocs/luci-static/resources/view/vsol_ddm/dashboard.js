@@ -10,6 +10,47 @@ var callGetStatus = rpc.declare({
 	expect: {}
 });
 
+/* OMCI managed entities. Deliberately not on the poll loop: the backend holds a
+ * telnet session for the better part of 20 seconds to collect these, the ONT
+ * accepts only about two concurrent sessions, and the values are provisioning
+ * state that changes when the OLT reconfigures the ONT rather than per poll. */
+var callGetOmci = rpc.declare({
+	object: 'vsol_ddm',
+	method: 'get_omci',
+	expect: {}
+});
+
+var callRestart = rpc.declare({
+	object: 'vsol_ddm',
+	method: 'restart',
+	expect: {}
+});
+
+/* Managed entities rendered as cards, in display order. The descriptions are
+ * ITU-T G.988 names; the CLI's own labels (EthUni, OltG) are shown alongside
+ * whatever the ONT reports so the card still makes sense on other firmware. */
+var OMCI_CARDS = [
+	{ id: '11',  title: _('Ethernet UNI'),        sub: _('ME 11 - physical Ethernet user network interfaces') },
+	{ id: '84',  title: _('VLAN Tag Filter'),     sub: _('ME 84 - VLANs the ONT is provisioned to accept') },
+	{ id: '171', title: _('Extended VLAN Tagging'), sub: _('ME 171 - tagging and translation rules') },
+	{ id: '329', title: _('Virtual Ethernet (VEIP)'), sub: _('ME 329 - virtual Ethernet interface point') },
+	{ id: '131', title: _('OLT Identification'),  sub: _('ME 131 - upstream OLT vendor and time of day') }
+];
+
+/* Vendor IDs are transmitted as four packed ASCII bytes in a hex word. */
+var hexToAscii = function(v) {
+	if (typeof v !== 'string') return null;
+	var h = v.replace(/^0x/i, '');
+	if (!/^[0-9a-fA-F]+$/.test(h) || h.length % 2) return null;
+	var out = '';
+	for (var i = 0; i < h.length; i += 2) {
+		var c = parseInt(h.substr(i, 2), 16);
+		if (c < 32 || c > 126) return null;
+		out += String.fromCharCode(c);
+	}
+	return out.length ? out : null;
+};
+
 /* ------------------------------------------------------------------------
  * Severity palette.
  * Every quality evaluator returns ALL five keys on EVERY return path:
@@ -182,6 +223,21 @@ return view.extend({
 			 * at the far left and its value at the far right. Flowing the pairs
 			 * into columns keeps them readable at any width. */
 			' .hw-kv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 28px; width: 100%; }' +
+			/* Action bar: full width so it sits above the dials as its own row. */
+			' .hw-actionbar { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border: 1px solid var(--border-color, rgba(128,128,128,0.18)); border-radius: 12px; background: var(--background-color-high, rgba(128,128,128,0.05)); }' +
+			' .hw-actionbar-title { font-size: 0.95em; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; opacity: 0.85; }' +
+			' .hw-actionbar-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }' +
+			' .hw-actionbar-note { font-size: 0.72em; opacity: 0.65; width: 100%; margin: 0; }' +
+			/* OMCI section: its own wrapping row of cards inside the flex dashboard. */
+			' .hw-omci-wrap { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: stretch; gap: 20px; }' +
+			' .hw-omci-inst { width: 100%; margin: 0 0 12px 0; padding: 10px 12px; border: 1px solid var(--border-color, rgba(128,128,128,0.15)); border-radius: 8px; }' +
+			' .hw-omci-inst:last-child { margin-bottom: 0; }' +
+			' .hw-omci-eid { font-size: 0.75em; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; opacity: 0.8; margin: 0 0 8px 0; }' +
+			' .hw-omci-tbl { width: 100%; border-collapse: collapse; font-size: 0.76em; }' +
+			' .hw-omci-tbl th, .hw-omci-tbl td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border-color, rgba(128,128,128,0.12)); white-space: nowrap; }' +
+			' .hw-omci-tbl th { font-weight: 700; opacity: 0.7; }' +
+			' .hw-omci-tbl td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }' +
+			' .hw-omci-empty { font-size: 0.78em; opacity: 0.6; text-align: center; padding: 12px 0; }' +
 			' .hw-card.half { flex: 1 1 calc(50% - 10px); align-items: stretch; }' +
 			' .hw-card h3 { margin: 0 0 6px 0; min-height: 24px; line-height: 1.3; font-size: 1.00em; color: var(--text-color, inherit); opacity: 0.85; text-transform: uppercase; letter-spacing: 0.8px; text-align: center; word-break: break-word; font-weight: 700; }' +
 			' .hw-card-sub { margin: 0 0 14px 0; font-size: 0.72em; opacity: 0.62; text-align: center; line-height: 1.3; word-break: break-word; min-width: 0; }' +
@@ -248,6 +304,56 @@ return view.extend({
 			style: 'display: none;'
 		}, '');
 		container.appendChild(errBanner);
+
+		/* ---------------- Action bar ------------------------------------
+		 * Sits above the dials as its own full-width row. Holds the two
+		 * operations that act on the ONT rather than just reading from it, so
+		 * they are never mixed in among the telemetry cards.
+		 * ---------------------------------------------------------------- */
+		var omciWrap = E('div', { id: 'hw-omci-wrap', class: 'hw-omci-wrap' });
+		var actionNote = E('p', { class: 'hw-actionbar-note', style: 'display: none;' }, '');
+
+		var setNote = function(msg, colour) {
+			actionNote.textContent = msg || '';
+			actionNote.style.color = colour || '';
+			actionNote.style.display = msg ? '' : 'none';
+		};
+
+		var omciBtn = E('button', {
+			class: 'cbi-button cbi-button-neutral',
+			click: function() { loadOmci(true); }
+		}, _('Refresh OMCI'));
+
+		/* A restart drops the fibre link for around a minute, so it confirms
+		 * first and reports what the backend actually returned rather than
+		 * assuming success. */
+		var restartBtn = E('button', {
+			class: 'cbi-button cbi-button-negative',
+			click: function(ev) {
+				if (!confirm(_('Restart the VSOL ONT now? The fibre link and every service through it will drop for about a minute.')))
+					return;
+
+				var btn = ev.currentTarget;
+				btn.disabled = true;
+				setNote(_('Sending restart command to the ONT...'));
+
+				callRestart().then(function(res) {
+					res = res || {};
+					setNote(res.message || res.error || _('Restart command sent.'),
+					        res.success ? '' : '#e53935');
+					btn.disabled = false;
+				}).catch(function(e) {
+					setNote(_('Restart failed: ') + (e && e.message ? e.message : String(e)), '#e53935');
+					btn.disabled = false;
+				});
+			}
+		}, _('Restart ONT'));
+
+		container.appendChild(E('div', { class: 'hw-actionbar' }, [
+			E('div', { class: 'hw-actionbar-title' }, _('VSOL V2802RH ONT')),
+			E('div', { class: 'hw-actionbar-actions' }, [omciBtn, restartBtn]),
+			actionNote
+		]));
 
 		/* ---------------- Metric & Imperial conversion utilities --------- */
 		var toFahrenheit = function(c) {
@@ -737,6 +843,135 @@ return view.extend({
 			E('div', { class: 'hw-table-scroll' }, [threshTable])
 		]);
 		container.appendChild(threshCard);
+
+		/* ---------------- OMCI managed entity cards ---------------------
+		 * One card per ME class. The backend returns each instance as a flat
+		 * map of whatever fields the ONT printed, plus optional `rules` (the
+		 * ME 171 tagging table) and `lines` (indented continuation rows such
+		 * as ME 131's ToDInfo). Rendering is driven by the payload rather than
+		 * a fixed field list, so a firmware that reports extra fields shows
+		 * them instead of silently dropping them.
+		 * ---------------------------------------------------------------- */
+		container.appendChild(omciWrap);
+
+		/* G.988 assigns these polarities, but this firmware reports ME 11's two
+		 * ports with them apparently inverted relative to each other. Raw values
+		 * are shown with the legend rather than being rendered as a green/red
+		 * badge that could be backwards. */
+		var OMCI_STATE_LEGEND = _('AdminState: 0 = unlocked, 1 = locked. OpState: 0 = enabled, 1 = disabled (ITU-T G.988). This firmware does not report these consistently, so raw values are shown.');
+
+		var omciScalarGrid = function(inst) {
+			var rows = [];
+			for (var k in inst) {
+				if (k === 'rules' || k === 'lines') continue;
+				var v = inst[k];
+				if (v === '' || v == null) v = '--';
+				/* Vendor IDs are four packed ASCII bytes: 0x414c434c is "ALCL". */
+				if (k === 'OltVendorId') {
+					var ascii = hexToAscii(inst[k]);
+					if (ascii) v = inst[k] + '  (' + ascii + ')';
+				}
+				rows.push(E('div', { class: 'hw-kv' }, [
+					E('span', { class: 'hw-kv-k' }, k),
+					E('span', { class: 'hw-kv-v' }, String(v))
+				]));
+			}
+			return E('div', { class: 'hw-kv-grid' }, rows);
+		};
+
+		var omciRulesTable = function(rules) {
+			return E('div', { class: 'hw-table-scroll' }, [
+				E('table', { class: 'hw-omci-tbl' }, [
+					E('thead', {}, [E('tr', {}, [
+						E('th', {}, _('#')),
+						E('th', {}, _('Filter outer')),
+						E('th', {}, _('Filter inner')),
+						E('th', {}, _('Treatment outer')),
+						E('th', {}, _('Treatment inner'))
+					])]),
+					E('tbody', {}, rules.map(function(r) {
+						return E('tr', {}, [
+							E('td', { class: 'mono' }, r.index != null ? String(r.index) : '--'),
+							E('td', { class: 'mono' }, r.filter_outer || '--'),
+							E('td', { class: 'mono' }, r.filter_inner || '--'),
+							E('td', { class: 'mono' }, r.treatment_outer || '--'),
+							E('td', { class: 'mono' }, r.treatment_inner || '--')
+						]);
+					}))
+				])
+			]);
+		};
+
+		var renderOmciCards = function(payload, placeholder) {
+			var me = (payload && payload.me) || {};
+
+			omciWrap.innerHTML = '';
+
+			OMCI_CARDS.forEach(function(spec) {
+				var data = me[spec.id];
+				var body;
+
+				if (!data || !data.instances || !data.instances.length) {
+					body = [E('div', { class: 'hw-omci-empty' },
+						placeholder ? _('Not read yet') : _('No instances reported'))];
+				} else {
+					body = data.instances.map(function(inst) {
+						var eid = inst.EntityID || inst.EntityId || '--';
+						var kids = [
+							E('div', { class: 'hw-omci-eid' }, _('Entity') + ' ' + eid),
+							omciScalarGrid(inst)
+						];
+						if (inst.rules && inst.rules.length)
+							kids.push(omciRulesTable(inst.rules));
+						if (inst.lines && inst.lines.length)
+							kids.push(E('div', { class: 'hw-kv-grid' }, inst.lines.map(function(line) {
+								return E('div', { class: 'hw-kv' }, [
+									E('span', { class: 'hw-kv-v' }, line)
+								]);
+							})));
+						return E('div', { class: 'hw-omci-inst' }, kids);
+					});
+				}
+
+				/* ME 171's rule table is wide; the rest pair up two to a row. */
+				var head = [
+					E('h3', {}, spec.title + (data && data.name ? ' – ' + data.name : '')),
+					E('div', { class: 'hw-card-sub' }, spec.sub)
+				];
+				var foot = (spec.id === '11' || spec.id === '329')
+					? [E('p', { class: 'hw-actionbar-note' }, OMCI_STATE_LEGEND)]
+					: [];
+
+				omciWrap.appendChild(E('div', {
+					class: spec.id === '171' ? 'hw-card wide' : 'hw-card half',
+					style: 'align-items: stretch; justify-content: flex-start;'
+				}, head.concat(body).concat(foot)));
+			});
+		};
+
+		var omciLoaded = false;
+		var loadOmci = function(force) {
+			if (omciLoaded && !force)
+				return;
+			omciLoaded = true;
+
+			omciBtn.disabled = true;
+			setNote(_('Reading OMCI managed entities from the ONT. This holds a telnet session for up to 20 seconds.'));
+
+			callGetOmci().then(function(res) {
+				res = res || {};
+				renderOmciCards(res, false);
+				setNote(res.success ? '' : (res.error || _('Could not read OMCI data from the ONT.')),
+				        res.success ? '' : '#e53935');
+				omciBtn.disabled = false;
+			}).catch(function(e) {
+				setNote(_('OMCI read failed: ') + (e && e.message ? e.message : String(e)), '#e53935');
+				omciBtn.disabled = false;
+			});
+		};
+
+		renderOmciCards(null, true);
+		loadOmci(false);
 
 		/* ---------------- Shared DOM helpers ---------------------------- */
 		var setTxt = function(id, val) {
