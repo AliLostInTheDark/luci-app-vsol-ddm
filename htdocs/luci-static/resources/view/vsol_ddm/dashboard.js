@@ -272,6 +272,10 @@ return view.extend({
 			' .hw-chart-metrics { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }' +
 			' .hw-chart-val { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 1.15em; font-weight: 700; line-height: 1.2; transition: color 0.3s ease; }' +
 			' .hw-chart-submetrics { display: flex; gap: 8px; font-size: 0.72em; opacity: 0.65; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; flex-wrap: wrap; }' +
+			' .hw-range-btn-group { display: inline-flex; gap: 3px; background: rgba(0, 0, 0, 0.25); padding: 2px 3px; border-radius: 6px; border: 1px solid var(--border-color, rgba(128, 128, 128, 0.2)); margin-top: 5px; }' +
+			' .hw-range-btn { padding: 2px 8px; font-size: 0.74em; font-weight: 600; line-height: 1.3; border: none; background: transparent; color: var(--text-color, #ccc); opacity: 0.75; border-radius: 4px; cursor: pointer; transition: all 0.15s ease; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }' +
+			' .hw-range-btn:hover { background: rgba(255, 255, 255, 0.12); opacity: 1; color: #fff; }' +
+			' .hw-range-btn.active { background: #0288d1; color: #ffffff; opacity: 1; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2); }' +
 			' .hw-card h3 { margin: 0 0 6px 0; min-height: 24px; line-height: 1.3; font-size: 1.00em; color: var(--text-color, inherit); opacity: 0.85; text-transform: uppercase; letter-spacing: 0.8px; text-align: center; word-break: break-word; font-weight: 700; }' +
 			' .hw-card-sub { margin: 0 0 14px 0; font-size: 0.72em; opacity: 0.62; text-align: center; line-height: 1.3; word-break: break-word; min-width: 0; }' +
 			' .hw-subtitle { margin: 0 0 14px 0; font-size: 0.72em; line-height: 1.3; letter-spacing: 0.4px; opacity: 0.6; text-align: center; word-break: break-word; min-width: 0; }' +
@@ -695,8 +699,17 @@ return view.extend({
 		container.appendChild(txDial.node);
 		container.appendChild(tempDial.node);
 
-		/* ---------------- 24-Hour Historical Time-Series Charts ------------- */
+		/* ---------------- Historical Time-Series Charts (1h/6h/12h/24h) ---- */
 		var MAX_CHART_SAMPLES = 1440;
+		var CHART_WINDOWS = [
+			{ key: '1h', label: '1h', hours: 1, ms: 1 * 3600 * 1000 },
+			{ key: '6h', label: '6h', hours: 6, ms: 6 * 3600 * 1000 },
+			{ key: '12h', label: '12h', hours: 12, ms: 12 * 3600 * 1000 },
+			{ key: '24h', label: '24h', hours: 24, ms: 24 * 3600 * 1000 }
+		];
+		var activeChartWindowMs = 24 * 3600 * 1000;
+		var lastRenderStatus = null;
+
 		var chartHistories = {
 			rx: [],
 			tx: [],
@@ -718,6 +731,14 @@ return view.extend({
 			}
 		}
 
+		var renderAllCharts = function(statusData) {
+			var th = (statusData && statusData.ddm && statusData.ddm.thresholds) ? statusData.ddm.thresholds : SFF_THRESHOLDS;
+			renderChart(rxChart, chartHistories.rx, th.rx_low_alarm, th.rx_high_alarm);
+			renderChart(txChart, chartHistories.tx, th.tx_low_alarm, th.tx_high_alarm);
+			renderChart(tempChart, chartHistories.temp, th.temp_low_alarm, th.temp_high_alarm);
+			renderChart(biasChart, chartHistories.bias, th.bias_low_alarm, th.bias_high_alarm);
+		};
+
 		var createChartCard = function(key, title, unit, color, minFixed, maxFixed, subtitle, tooltip) {
 			var canvas = E('canvas', {
 				id: 'hw-chart-' + key,
@@ -730,11 +751,34 @@ return view.extend({
 			var maxVal = E('span', { id: 'hw-chart-max-' + key, class: 'hw-chart-val-sub' }, 'Max: --');
 			var avgVal = E('span', { id: 'hw-chart-avg-' + key, class: 'hw-chart-val-sub' }, 'Avg: --');
 
+			var rangeBtns = E('div', { class: 'hw-range-btn-group' }, CHART_WINDOWS.map(function(w) {
+				return E('button', {
+					class: 'hw-range-btn' + (w.ms === activeChartWindowMs ? ' active' : ''),
+					type: 'button',
+					'data-ms': w.ms,
+					click: function(ev) {
+						ev.preventDefault();
+						activeChartWindowMs = w.ms;
+						document.querySelectorAll('.hw-range-btn').forEach(function(b) {
+							if (parseInt(b.getAttribute('data-ms'), 10) === activeChartWindowMs) {
+								b.classList.add('active');
+							} else {
+								b.classList.remove('active');
+							}
+						});
+						if (lastRenderStatus) {
+							renderAllCharts(lastRenderStatus);
+						}
+					}
+				}, w.label);
+			}));
+
 			var card = E('div', { class: 'hw-card wide hw-chart-card', title: tooltip || '' }, [
 				E('div', { class: 'hw-chart-header' }, [
 					E('div', {}, [
 						E('h3', { style: 'text-align: left; margin: 0 0 2px 0;', title: tooltip || '' }, title),
-						E('div', { class: 'hw-card-sub', style: 'text-align: left; margin: 0;' }, (subtitle || (_('24-Hour Historical Trend') + ' (' + unit + ')')))
+						E('div', { class: 'hw-card-sub', style: 'text-align: left; margin: 0;' }, (subtitle || (_('Historical Trend') + ' (' + unit + ')'))),
+						rangeBtns
 					]),
 					E('div', { class: 'hw-chart-metrics' }, [
 						curVal,
@@ -1132,9 +1176,9 @@ return view.extend({
 			ctx.fillStyle = 'rgba(0, 0, 0, 0.16)';
 			ctx.fillRect(padL, padT, plotW, plotH);
 
-			// 24-Hour Fixed Window
+			// Active Selected Time Window (1h, 6h, 12h, 24h)
 			var now = Date.now();
-			var WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+			var WINDOW_MS = activeChartWindowMs || (24 * 60 * 60 * 1000);
 			var minTime = now - WINDOW_MS;
 			var maxTime = now;
 
@@ -1143,7 +1187,7 @@ return view.extend({
 			var maxEl = document.getElementById('hw-chart-max-' + chartObj.key);
 			var avgEl = document.getElementById('hw-chart-avg-' + chartObj.key);
 
-			// Filter points belonging to the 24h window
+			// Filter points belonging to the active time window
 			var allSamples = dataHistory.filter(function(d) {
 				return d != null && d.time >= minTime - 60000;
 			});
@@ -1159,7 +1203,7 @@ return view.extend({
 				ctx.fillStyle = 'rgba(128,128,128,0.4)';
 				ctx.font = '12px system-ui, sans-serif';
 				ctx.textAlign = 'center';
-				ctx.fillText(_('Waiting for 24h telemetry samples...'), padL + plotW / 2, padT + plotH / 2);
+				ctx.fillText(_('Waiting for telemetry samples...'), padL + plotW / 2, padT + plotH / 2);
 				ctx.restore();
 				return;
 			}
@@ -1249,33 +1293,53 @@ return view.extend({
 				ctx.fillText(gVal.toFixed(1), padL - 5, gy + 3);
 			}
 
-			// Draw 24 Vertical Lines (every 1 hour passed) across the 24-hour timeline
+			// Configure time subdivisions based on selected window
+			var numVerticalLines, labelStep, dotIntervalMs;
+			if (WINDOW_MS <= 3600 * 1000) {
+				// 1 Hour window: 6 divisions (every 10 min)
+				numVerticalLines = 6;
+				labelStep = (plotW < 450) ? 2 : 1;
+				dotIntervalMs = 5 * 60 * 1000; // dot every 5 mins
+			} else if (WINDOW_MS <= 6 * 3600 * 1000) {
+				// 6 Hours window: 6 divisions (every 1 hour)
+				numVerticalLines = 6;
+				labelStep = (plotW < 450) ? 2 : 1;
+				dotIntervalMs = 15 * 60 * 1000; // dot every 15 mins
+			} else if (WINDOW_MS <= 12 * 3600 * 1000) {
+				// 12 Hours window: 12 divisions (every 1 hour)
+				numVerticalLines = 12;
+				labelStep = (plotW < 500) ? 3 : 2;
+				dotIntervalMs = 30 * 60 * 1000; // dot every 30 mins
+			} else {
+				// 24 Hours window: 24 divisions (every 1 hour)
+				numVerticalLines = 24;
+				labelStep = (plotW < 520) ? 6 : (plotW < 750 ? 4 : 2);
+				dotIntervalMs = 30 * 60 * 1000; // dot every 30 mins
+			}
+
+			// Draw Vertical Lines
 			ctx.lineWidth = 1;
-			for (var h = 0; h <= 24; h++) {
-				var hx = padL + (plotW * h / 24);
+			for (var vl = 0; vl <= numVerticalLines; vl++) {
+				var vx = padL + (plotW * vl / numVerticalLines);
 				ctx.strokeStyle = 'rgba(128, 128, 128, 0.10)';
 				ctx.beginPath();
-				ctx.moveTo(hx, padT);
-				ctx.lineTo(hx, padT + plotH);
+				ctx.moveTo(vx, padT);
+				ctx.lineTo(vx, padT + plotH);
 				ctx.stroke();
 			}
 
-			// Draw X-axis Hour Values (00:00 to 24:00 timeline) with zero truncation
-			var labelIntervalHours = 2; // default: every 2 hours
-			if (plotW < 520) labelIntervalHours = 6;      // mobile: every 6 hours
-			else if (plotW < 750) labelIntervalHours = 4;  // tablet: every 4 hours
-
-			for (var hr = 0; hr <= 24; hr += labelIntervalHours) {
-				var lx = padL + (plotW * hr / 24);
-				var curT = minTime + (hr * 3600 * 1000);
+			// Draw X-axis Timestamps with zero truncation
+			for (var ls = 0; ls <= numVerticalLines; ls += labelStep) {
+				var lx = padL + (plotW * ls / numVerticalLines);
+				var curT = minTime + (WINDOW_MS * ls / numVerticalLines);
 				var dObj = new Date(curT);
 				var hh = ('0' + dObj.getHours()).slice(-2);
 				var mm = ('0' + dObj.getMinutes()).slice(-2);
 				var timeLabel = hh + ':' + mm;
 
-				if (hr === 0) {
+				if (ls === 0) {
 					ctx.textAlign = 'left';
-				} else if (hr === 24) {
+				} else if (ls === numVerticalLines) {
 					ctx.textAlign = 'right';
 					timeLabel = _('Now') + ' (' + hh + ':' + mm + ')';
 				} else {
@@ -1284,7 +1348,7 @@ return view.extend({
 				ctx.fillText(timeLabel, lx, padT + plotH + 16);
 			}
 
-			// Map all points to 24-hour canvas coordinates with state evaluation
+			// Map all points to active canvas coordinates with state evaluation
 			var points = [];
 			for (var p = 0; p < allSamples.length; p++) {
 				var item = allSamples[p];
@@ -1344,15 +1408,14 @@ return view.extend({
 				ctx.stroke();
 			}
 
-			// 3. Draw small Grafana point dots at 15-minute intervals (4 per hour) and at the latest endpoint
+			// 3. Draw small Grafana point dots at dotIntervalMs (and at endpoints)
 			var lastDotTime = -Infinity;
-			var FIFTEEN_MIN_MS = 15 * 60 * 1000;
 			for (var d = 0; d < points.length; d++) {
 				var pt = points[d];
 				if (pt.offline) continue;
 				var ptTime = pt.time || (minTime + ((pt.x - padL) / plotW) * WINDOW_MS);
-				var is15m = (ptTime - lastDotTime >= FIFTEEN_MIN_MS - 15000) || (d === points.length - 1) || (d === 0);
-				if (is15m) {
+				var isDot = (ptTime - lastDotTime >= dotIntervalMs - 10000) || (d === points.length - 1) || (d === 0);
+				if (isDot) {
 					lastDotTime = ptTime;
 					ctx.beginPath();
 					ctx.setLineDash([]);
@@ -1563,10 +1626,8 @@ return view.extend({
 				while (chartHistories.bias.length > MAX_CHART_SAMPLES) chartHistories.bias.shift();
 			}
 
-			renderChart(rxChart, chartHistories.rx, th.rx_pwr_low_alarm, th.rx_pwr_high_alarm);
-			renderChart(txChart, chartHistories.tx, th.tx_pwr_low_alarm, th.tx_pwr_high_alarm);
-			renderChart(tempChart, chartHistories.temp, th.temp_low_alarm, th.temp_high_alarm);
-			renderChart(biasChart, chartHistories.bias, th.bias_low_alarm, th.bias_high_alarm);
+			lastRenderStatus = res;
+			renderAllCharts(res);
 
 			// 5. Card 1: GPON & OMCI management
 			var stateRaw = (onu.state !== undefined && onu.state !== null && onu.state !== '')
