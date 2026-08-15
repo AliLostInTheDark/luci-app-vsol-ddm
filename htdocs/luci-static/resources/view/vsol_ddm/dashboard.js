@@ -247,9 +247,9 @@ return view.extend({
 			' .hw-omci-tbl td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }' +
 			' .hw-omci-empty { font-size: 0.78em; opacity: 0.6; text-align: center; padding: 12px 0; }' +
 			' .hw-card.half { flex: 1 1 calc(50% - 10px); align-items: stretch; }' +
-			/* Time-series charts section */
-			' .hw-charts-wrap { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: stretch; gap: 20px; }' +
-			' .hw-chart-card { flex: 1 1 calc(50% - 10px); min-width: 280px; align-items: stretch; justify-content: flex-start; }' +
+			/* Time-series charts section - 1 card with full width each */
+			' .hw-charts-wrap { flex: 1 1 100%; display: flex; flex-direction: column; align-items: stretch; gap: 20px; width: 100%; }' +
+			' .hw-chart-card { flex: 1 1 100%; width: 100%; min-width: 0; align-items: stretch; justify-content: flex-start; }' +
 			' .hw-chart-header { display: flex; justify-content: space-between; align-items: flex-start; width: 100%; gap: 10px; }' +
 			' .hw-chart-metrics { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }' +
 			' .hw-chart-val { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 1.15em; font-weight: 700; line-height: 1.2; }' +
@@ -700,7 +700,7 @@ return view.extend({
 			var canvas = E('canvas', {
 				id: 'hw-chart-' + key,
 				class: 'hw-chart-canvas',
-				style: 'width: 100%; height: 160px; display: block;'
+				style: 'width: 100%; height: 180px; display: block;'
 			});
 
 			var curVal = E('span', { id: 'hw-chart-cur-' + key, class: 'hw-chart-val', style: 'color: ' + color + ';' }, '--');
@@ -708,7 +708,7 @@ return view.extend({
 			var maxVal = E('span', { id: 'hw-chart-max-' + key, class: 'hw-chart-val-sub' }, 'Max: --');
 			var avgVal = E('span', { id: 'hw-chart-avg-' + key, class: 'hw-chart-val-sub' }, 'Avg: --');
 
-			var card = E('div', { class: 'hw-card half hw-chart-card' }, [
+			var card = E('div', { class: 'hw-card wide hw-chart-card' }, [
 				E('div', { class: 'hw-chart-header' }, [
 					E('div', {}, [
 						E('h3', { style: 'text-align: left; margin: 0 0 2px 0;' }, title),
@@ -719,7 +719,7 @@ return view.extend({
 						E('div', { class: 'hw-chart-submetrics' }, [minVal, avgVal, maxVal])
 					])
 				]),
-				E('div', { style: 'position: relative; width: 100%; height: 160px; margin-top: 10px;' }, [canvas])
+				E('div', { style: 'position: relative; width: 100%; height: 180px; margin-top: 10px;' }, [canvas])
 			]);
 
 			return {
@@ -1091,7 +1091,7 @@ return view.extend({
 
 		renderOmciCards(null, true);
 
-		/* ---------------- Time-series Canvas Renderer -------------------- */
+		/* ---------------- Time-series Canvas Renderer (24h Window) ------- */
 		var renderChart = function(chartObj, dataHistory, thLo, thHi) {
 			var canvas = chartObj.canvas;
 			if (!canvas || !canvas.getContext) return;
@@ -1101,7 +1101,7 @@ return view.extend({
 			var dpr = window.devicePixelRatio || 1;
 			var rect = canvas.getBoundingClientRect();
 			var width = rect.width || 300;
-			var height = rect.height || 160;
+			var height = rect.height || 180;
 
 			if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
 				canvas.width = Math.round(width * dpr);
@@ -1112,10 +1112,10 @@ return view.extend({
 			ctx.scale(dpr, dpr);
 			ctx.clearRect(0, 0, width, height);
 
-			var padL = 42;
-			var padR = 14;
-			var padT = 12;
-			var padB = 22;
+			var padL = 44;
+			var padR = 16;
+			var padT = 14;
+			var padB = 24;
 			var plotW = width - padL - padR;
 			var plotH = height - padT - padB;
 
@@ -1124,37 +1124,46 @@ return view.extend({
 				return;
 			}
 
-			var valid = dataHistory.filter(function(d) { return d != null && isFinite(d.val); });
+			// 24-Hour Fixed Window
+			var now = Date.now();
+			var WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
+			var minTime = now - WINDOW_MS;
+			var maxTime = now;
+
 			var curEl = document.getElementById('hw-chart-cur-' + chartObj.key);
 			var minEl = document.getElementById('hw-chart-min-' + chartObj.key);
 			var maxEl = document.getElementById('hw-chart-max-' + chartObj.key);
 			var avgEl = document.getElementById('hw-chart-avg-' + chartObj.key);
 
-			if (!valid.length) {
+			// Filter points belonging to the 24h window
+			var allSamples = dataHistory.filter(function(d) {
+				return d != null && d.time >= minTime - 60000;
+			});
+			var validSamples = allSamples.filter(function(d) {
+				return d.val != null && isFinite(d.val);
+			});
+
+			if (!validSamples.length) {
 				if (curEl) curEl.textContent = '--';
 				if (minEl) minEl.textContent = 'Min: --';
 				if (maxEl) maxEl.textContent = 'Max: --';
 				if (avgEl) avgEl.textContent = 'Avg: --';
-				ctx.fillStyle = 'rgba(128,128,128,0.3)';
+				ctx.fillStyle = 'rgba(128,128,128,0.4)';
 				ctx.font = '12px system-ui, sans-serif';
 				ctx.textAlign = 'center';
-				ctx.fillText(_('Waiting for telemetry samples...'), padL + plotW / 2, padT + plotH / 2);
+				ctx.fillText(_('Waiting for 24h telemetry samples...'), padL + plotW / 2, padT + plotH / 2);
 				ctx.restore();
 				return;
 			}
 
 			var minVal = Infinity, maxVal = -Infinity, sum = 0;
-			var minTime = Infinity, maxTime = -Infinity;
-			for (var i = 0; i < valid.length; i++) {
-				var v = valid[i].val;
-				var t = valid[i].time || 0;
+			for (var i = 0; i < validSamples.length; i++) {
+				var v = validSamples[i].val;
 				if (v < minVal) minVal = v;
 				if (v > maxVal) maxVal = v;
 				sum += v;
-				if (t < minTime) minTime = t;
-				if (t > maxTime) maxTime = t;
 			}
-			var avgValNum = sum / valid.length;
+			var avgValNum = sum / validSamples.length;
 
 			if (chartObj.minFixed != null) minVal = Math.min(minVal, chartObj.minFixed);
 			if (chartObj.maxFixed != null) maxVal = Math.max(maxVal, chartObj.maxFixed);
@@ -1171,7 +1180,7 @@ return view.extend({
 			var yMin = minVal - yPad;
 			var yMax = maxVal + yPad;
 
-			var latest = valid[valid.length - 1].val;
+			var latest = validSamples[validSamples.length - 1].val;
 			if (curEl) curEl.textContent = latest.toFixed(2) + ' ' + chartObj.unit;
 			if (minEl) minEl.textContent = 'Min: ' + minVal.toFixed(1);
 			if (maxEl) maxEl.textContent = 'Max: ' + maxVal.toFixed(1);
@@ -1180,11 +1189,11 @@ return view.extend({
 			// Draw Grid lines & Y labels
 			ctx.strokeStyle = 'rgba(128, 128, 128, 0.12)';
 			ctx.lineWidth = 1;
-			ctx.fillStyle = 'rgba(128, 128, 128, 0.6)';
+			ctx.fillStyle = 'rgba(128, 128, 128, 0.65)';
 			ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
 			ctx.textAlign = 'right';
 
-			var gridSteps = 3;
+			var gridSteps = 4;
 			for (var g = 0; g <= gridSteps; g++) {
 				var gy = padT + (plotH * g / gridSteps);
 				var gVal = yMax - ((yMax - yMin) * g / gridSteps);
@@ -1192,22 +1201,22 @@ return view.extend({
 				ctx.moveTo(padL, gy);
 				ctx.lineTo(padL + plotW, gy);
 				ctx.stroke();
-				ctx.fillText(gVal.toFixed(1), padL - 5, gy + 3);
+				ctx.fillText(gVal.toFixed(1), padL - 6, gy + 3);
 			}
 
-			// Draw X-axis timeline marks
+			// Draw X-axis 24-Hour Timeline Marks (-24h, -18h, -12h, -6h, Now)
 			ctx.textAlign = 'center';
-			var timeSpan = (maxTime > minTime) ? (maxTime - minTime) : 0;
 			var xSteps = 4;
+			var xLabels = [_('24h ago'), _('18h ago'), _('12h ago'), _('6h ago'), _('Now')];
 			for (var xs = 0; xs <= xSteps; xs++) {
 				var xx = padL + (plotW * xs / xSteps);
-				var curT = minTime + (timeSpan * xs / xSteps);
+				var curT = minTime + (WINDOW_MS * xs / xSteps);
 				var dObj = new Date(curT);
 				var hh = ('0' + dObj.getHours()).slice(-2);
 				var mm = ('0' + dObj.getMinutes()).slice(-2);
-				var lbl = (xs === xSteps) ? _('Now') : (hh + ':' + mm);
-				if (timeSpan < 120000 && xs < xSteps) lbl = '-' + Math.round((maxTime - curT) / 1000) + 's';
-				ctx.fillText(lbl, xx, padT + plotH + 15);
+				var lbl = xLabels[xs] + ' (' + hh + ':' + mm + ')';
+				if (xs === xSteps) lbl = _('Now') + ' (' + hh + ':' + mm + ')';
+				ctx.fillText(lbl, xx, padT + plotH + 16);
 			}
 
 			// Threshold guide lines (dashed)
@@ -1215,7 +1224,7 @@ return view.extend({
 				var tLoY = padT + plotH * (1 - (thLo - yMin) / (yMax - yMin));
 				ctx.save();
 				ctx.setLineDash([4, 4]);
-				ctx.strokeStyle = 'rgba(255, 82, 82, 0.45)';
+				ctx.strokeStyle = 'rgba(255, 82, 82, 0.55)';
 				ctx.beginPath();
 				ctx.moveTo(padL, tLoY);
 				ctx.lineTo(padL + plotW, tLoY);
@@ -1226,7 +1235,7 @@ return view.extend({
 				var tHiY = padT + plotH * (1 - (thHi - yMin) / (yMax - yMin));
 				ctx.save();
 				ctx.setLineDash([4, 4]);
-				ctx.strokeStyle = 'rgba(255, 82, 82, 0.45)';
+				ctx.strokeStyle = 'rgba(255, 82, 82, 0.55)';
 				ctx.beginPath();
 				ctx.moveTo(padL, tHiY);
 				ctx.lineTo(padL + plotW, tHiY);
@@ -1234,51 +1243,78 @@ return view.extend({
 				ctx.restore();
 			}
 
-			// Plot points mapped by timeline
+			// Map all points to 24-hour canvas coordinates with state evaluation
 			var points = [];
-			var n = valid.length;
-			for (var p = 0; p < n; p++) {
-				var item = valid[p];
-				var px;
-				if (timeSpan > 0) {
-					px = padL + ((item.time - minTime) / timeSpan) * plotW;
-				} else {
-					px = padL + (p / Math.max(1, n - 1)) * plotW;
-				}
-				var py = padT + plotH * (1 - (item.val - yMin) / (yMax - yMin));
-				points.push({ x: px, y: py, val: item.val });
+			for (var p = 0; p < allSamples.length; p++) {
+				var item = allSamples[p];
+				var px = padL + Math.max(0, Math.min(1, (item.time - minTime) / WINDOW_MS)) * plotW;
+				var isOffline = (item.val === null || !isFinite(item.val));
+				var valNum = isOffline ? yMin : item.val;
+				var py = padT + plotH * (1 - (valNum - yMin) / (yMax - yMin));
+				var isAlarm = (!isOffline && ((thLo != null && item.val < thLo) || (thHi != null && item.val > thHi)));
+				points.push({ x: px, y: py, val: item.val, offline: isOffline, alarm: isAlarm });
 			}
 
-			if (points.length >= 2) {
+			// 1. Draw subtle area glow under valid connected points
+			var validPoints = points.filter(function(pt) { return !pt.offline; });
+			if (validPoints.length >= 2) {
 				var grad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
-				grad.addColorStop(0, chartObj.color + '44');
-				grad.addColorStop(1, chartObj.color + '02');
+				grad.addColorStop(0, chartObj.color + '33');
+				grad.addColorStop(1, chartObj.color + '01');
 
 				ctx.beginPath();
-				ctx.moveTo(points[0].x, padT + plotH);
-				for (var k = 0; k < points.length; k++) {
-					ctx.lineTo(points[k].x, points[k].y);
+				ctx.moveTo(validPoints[0].x, padT + plotH);
+				for (var k = 0; k < validPoints.length; k++) {
+					ctx.lineTo(validPoints[k].x, validPoints[k].y);
 				}
-				ctx.lineTo(points[points.length - 1].x, padT + plotH);
+				ctx.lineTo(validPoints[validPoints.length - 1].x, padT + plotH);
 				ctx.closePath();
 				ctx.fillStyle = grad;
 				ctx.fill();
+			}
+
+			// 2. Draw segments with dynamic state colors:
+			//    - Grey dashed line for offline / unreachable
+			//    - Red line for values beyond or below limits
+			//    - Normal color for healthy operating values
+			for (var s = 0; s < points.length - 1; s++) {
+				var pA = points[s];
+				var pB = points[s + 1];
 
 				ctx.beginPath();
-				ctx.moveTo(points[0].x, points[0].y);
-				for (var m = 1; m < points.length; m++) {
-					ctx.lineTo(points[m].x, points[m].y);
-				}
-				ctx.strokeStyle = chartObj.color;
-				ctx.lineWidth = 2;
-				ctx.lineJoin = 'round';
-				ctx.stroke();
+				ctx.moveTo(pA.x, pA.y);
+				ctx.lineTo(pB.x, pB.y);
 
+				if (pA.offline || pB.offline) {
+					// Offline / unreachable state: grey dashed line
+					ctx.setLineDash([4, 4]);
+					ctx.strokeStyle = '#9e9e9e';
+					ctx.lineWidth = 1.8;
+				} else if (pA.alarm || pB.alarm) {
+					// Beyond or below limits: red solid line
+					ctx.setLineDash([]);
+					ctx.strokeStyle = '#ff5252';
+					ctx.lineWidth = 2.4;
+				} else {
+					// Normal healthy operating value: standard metric color
+					ctx.setLineDash([]);
+					ctx.strokeStyle = chartObj.color;
+					ctx.lineWidth = 2.2;
+				}
+				ctx.stroke();
+			}
+
+			// 3. Draw latest sample indicator dot
+			if (points.length > 0) {
 				var lastPt = points[points.length - 1];
 				ctx.beginPath();
-				ctx.arc(lastPt.x, lastPt.y, 3.5, 0, 2 * Math.PI);
-				ctx.fillStyle = chartObj.color;
+				ctx.setLineDash([]);
+				ctx.arc(lastPt.x, lastPt.y, 4, 0, 2 * Math.PI);
+				ctx.fillStyle = lastPt.offline ? '#9e9e9e' : (lastPt.alarm ? '#ff5252' : chartObj.color);
 				ctx.fill();
+				ctx.strokeStyle = 'var(--background-color-high, #1e1e1e)';
+				ctx.lineWidth = 1.5;
+				ctx.stroke();
 			}
 
 			ctx.restore();
