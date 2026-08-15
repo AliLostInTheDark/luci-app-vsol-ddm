@@ -23,7 +23,6 @@ An ONT reports far more than the four numbers a typical DDM page shows. This das
 - [Dashboard cards](#dashboard-cards)
 - [Settings](#settings)
 - [How it works](#how-it-works)
-- [Changelog](#changelog)
 - [License](#license)
 
 ## Highlights
@@ -127,32 +126,6 @@ Commands are pipelined rather than issued one at a time because the ONT accepts 
 Optical limits come from the V2802RH datasheet: receiver sensitivity −27 dBm, overload −8 dBm on GPON and −3 dBm on EPON, transmit window 0 to +4 dBm, wavelengths 1310 nm upstream and 1490 nm downstream. The ONT reports its PON port as EPON PX20+ and GPON Class B+. Transceiver temperature, voltage and bias limits follow SFF-8472. Warning bands are derived 1.0 dB inside each receiver alarm limit and 0.5 dB inside each transmitter one, so a warning band can never drift outside its own alarm band.
 
 The connector is not reported by the ONT — its CLI exposes only `bias-current`, `part-number`, `rx-power`, `sn`, `temperature`, `tx-power`, `vendor-name` and `voltage` — and the unit ships with either polish, so it is stated plainly rather than guessed.
-
-## Changelog
-
-### 1.0.1-r1
-
-**OMCI managed entities, as their own cards.** The ONT's `omcicli` output is read and rendered per managed entity — Ethernet UNI (ME 11), VLAN tag filter (ME 84), extended VLAN tagging (ME 171), VEIP (ME 329) and OLT identification (ME 131). The OLT vendor arrives as four packed ASCII bytes in a hex word and is decoded beside the raw value, so `0x414c434c` also reads as `ALCL`.
-
-The CLI output is not clean and is not scraped as if it were. Instances are delimited by runs of `=`, every line is separated by a blank, ME 171 nests a repeating filter/treatment table, and the ME 131 `Version` field carries raw bytes rather than text — `0x06 0x02 0x04` on the firmware this was developed against, which would otherwise emit literal control characters and make the output unparseable. `omci.awk` handles the structure and sanitises to printable ASCII, walking the string because BusyBox `awk` rejects octal ranges inside bracket expressions. It produces identical output under gawk, mawk and BusyBox awk.
-
-**The OMCI read stays off the telemetry poll.** It runs at the top-level CLI prompt rather than the diagnostic shell the telemetry path uses, paces its commands because ME 171 alone emits several hundred lines, and caches its result. The ONT accepts only about two concurrent telnet sessions and this query holds one for the better part of twenty seconds; managed entities are provisioning state that changes when the OLT reconfigures the ONT, not between polls.
-
-**Administrative and operational state are shown raw, with a legend.** ITU-T G.988 defines `AdminState` as 0 unlocked / 1 locked and `OpState` as 0 enabled / 1 disabled, but this firmware reports its two Ethernet UNI ports with those polarities apparently inverted relative to each other. A green or red badge would have been a coin flip, so the values are printed as reported and the specification's meaning is stated next to them.
-
-**A restart control for the ONT**, confirmed before firing and declared under ACL write rather than read, because it changes device state rather than reporting it.
-
-**24 hours of history, held in RAM.** A circular time-series buffer with a background collector and its own init script, feeding full-width charts for RX, TX, temperature and bias, with a 1h/6h/12h/24h range switcher whose subdivisions follow the selected window.
-
-**Live downstream and upstream FEC reporting and BIP error statistics**, and factory calibration data carried into the DDM parser and threshold matrix.
-
-**Laser off is shown as laser off** in the dial, the statistics, the chart and the threshold matrix when TX reads zero or null — a definite state the ONT reported, not a missing reading.
-
-Fixes: history telemetry is parsed with POSIX constructs BusyBox `awk` accepts; thresholds resolve through `resolveThresholds` so alarm colouring stays correct on a dark fibre; OMCI state is preserved across page reloads instead of being cleared with the link; and the chart X-axis no longer labels its newest point `Now`.
-
-### 1.0.0-r1
-
-First release.
 
 ## License
 
