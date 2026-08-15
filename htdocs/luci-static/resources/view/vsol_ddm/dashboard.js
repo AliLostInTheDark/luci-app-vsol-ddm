@@ -731,6 +731,8 @@ return view.extend({
 			kv(_('Supply Voltage:'), 'info-vcc'),
 			kv(_('Laser Bias Current:'), 'info-bias'),
 			kv(_('Forward Error Correction:'), 'info-fec'),
+			kv(_('FEC Codewords (Cor / Uncor):'), 'info-fec-codewords'),
+			kv(_('BIP Parity Errors (Bits / Blks):'), 'info-bip'),
 			kv(_('Optical Alarms:'), 'info-alarms')
 		]);
 
@@ -1221,9 +1223,30 @@ return view.extend({
 			setTxtColor('info-sn', onu.serial_number || dev.gpon_sn,
 				(onu.serial_number || dev.gpon_sn) ? ACCENT : SEVERITY.off.color);
 
-			/* FEC comes from the device, it is never assumed to be enabled. */
+			/* FEC and GPON PHY layer error statistics */
 			var fec = ddm.fec_status || onu.fec_status || dev.fec_status;
-			setTxtColor('info-fec', fec, fec ? ACCENT : SEVERITY.off.color);
+			var fecText = fec ? (fec + ' / US: OLT Grant (G.984.3)') : null;
+			setTxtColor('info-fec', fecText, fec ? ACCENT : SEVERITY.off.color);
+
+			var cor = num(ddm.fec_corrected_codewords);
+			var uncor = num(ddm.fec_uncorrectable_codewords);
+			if (!isNaN(cor) && !isNaN(uncor)) {
+				setTxtColor('info-fec-codewords',
+					cor.toLocaleString() + ' / ' + uncor.toLocaleString(),
+					(uncor > 0) ? SEVERITY.alarm.color : (cor > 0 ? SEVERITY.warn.color : SEVERITY.optimal.color));
+			} else {
+				setTxtColor('info-fec-codewords', null, SEVERITY.off.color);
+			}
+
+			var bipBits = num(ddm.bip_error_bits);
+			var bipBlks = num(ddm.bip_error_blocks);
+			if (!isNaN(bipBits) && !isNaN(bipBlks)) {
+				setTxtColor('info-bip',
+					bipBits.toLocaleString() + ' / ' + bipBlks.toLocaleString(),
+					(bipBits > 0 || bipBlks > 0) ? SEVERITY.warn.color : SEVERITY.optimal.color);
+			} else {
+				setTxtColor('info-bip', null, SEVERITY.off.color);
+			}
 
 			var alarmQ, alarmTxt;
 			if (!healthy) {

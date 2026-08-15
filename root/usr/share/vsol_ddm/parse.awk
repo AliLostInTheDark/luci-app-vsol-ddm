@@ -130,6 +130,11 @@ BEGIN {
 }
 
 /FEC state:/ { fec = (line ~ /enable/) ? "Enabled (ITU-T G.984.3)" : "Disabled"; has_fec = 1 }
+/FEC Correct codewords:/ { if (match(line, /[0-9]+/)) { fec_cor = substr(line, RSTART, RLENGTH) + 0; has_fec_cnt = 1 } }
+/FEC codewords Uncor:/   { if (match(line, /[0-9]+/)) { fec_uncor = substr(line, RSTART, RLENGTH) + 0; has_fec_cnt = 1 } }
+/FEC Correct bits:/      { if (match(line, /[0-9]+/)) { fec_bits = substr(line, RSTART, RLENGTH) + 0; has_fec_cnt = 1 } }
+/BIP Error bits[ \t]*:/  { if (match(line, /[0-9]+/)) { bip_bits = substr(line, RSTART, RLENGTH) + 0; has_bip = 1 } }
+/BIP Error blocks[ \t]*:/ { if (match(line, /[0-9]+/)) { bip_blks = substr(line, RSTART, RLENGTH) + 0; has_bip = 1 } }
 
 /RxPkt :/     { if (match(line, /RxPkt :[ \t]*[0-9]+/))     { rxp = substr(line, RSTART + 7) + 0 } ; if (match(line, /TxPkt :[ \t]*[0-9]+/)) { txp = substr(line, RSTART + 7) + 0 } ; has_eth = 1 }
 /RxBytes :/   { if (match(line, /RxBytes :[ \t]*[0-9]+/))   { rxb = substr(line, RSTART + 9) + 0 } ; if (match(line, /TxBytes :[ \t]*[0-9]+/)) { txb = substr(line, RSTART + 9) + 0 } }
@@ -193,6 +198,12 @@ END {
 	printf("    \"wavelength_tx_nm\": 1310,\n")
 	printf("    \"optical_budget_class\": \"%s\",\n", jesc(cit))
 	jstr("fec_status", fec, has_fec, 1)
+	jstr("fec_upstream_status", "OLT Grant Controlled (ITU-T G.984.3)", 1, 1)
+	jnum("fec_corrected_codewords", fec_cor, has_fec_cnt, "%d", 1)
+	jnum("fec_uncorrectable_codewords", fec_uncor, has_fec_cnt, "%d", 1)
+	jnum("fec_corrected_bits", fec_bits, has_fec_cnt, "%d", 1)
+	jnum("bip_error_bits", bip_bits, has_bip, "%d", 1)
+	jnum("bip_error_blocks", bip_blks, has_bip, "%d", 1)
 	jnum("eqd_offset", eqd, has_eqd, "%d", 0)
 	printf("  },\n")
 

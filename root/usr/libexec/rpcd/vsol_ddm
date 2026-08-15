@@ -183,6 +183,7 @@ do_query() {
 		printf 'gpon get tcont alloc-id 258\r\ngpon get tcont alloc-id 259\r\n'
 		printf 'gpon get us-flow flow-id 0\r\ngpon get us-flow flow-id 1\r\n'
 		printf 'gpon get us-flow flow-id 2\r\ngpon get us-flow flow-id 3\r\n'
+		printf 'gpon show counter global ds-phy\r\n'
 		printf 'port get status port all\r\nexit\r\nexit\r\n'
 		sleep "$READ_HOLD"
 	} | timeout "$TIMEOUT" nc "$HOST" "$PORT" 2>/dev/null |
