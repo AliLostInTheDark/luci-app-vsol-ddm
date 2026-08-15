@@ -109,17 +109,25 @@ record_history_sample() {
 	printf '%s\n' "$1" | awk -v now="$_now" -v hist="$HISTORY_FILE" '
 	BEGIN { rx="null"; tx="null"; temp="null"; bias="null"; ok=0 }
 	/"success"[ \t]*:[ \t]*true/ { ok=1 }
-	/"rx_power_dbm"[ \t]*:[ \t]*(-?[0-9.]+)/ {
-		match($0, /"rx_power_dbm"[ \t]*:[ \t]*(-?[0-9.]+)/, m); rx=sprintf("%.2f", m[1])
+	/"rx_power_dbm"[ \t]*:[ \t]*-?[0-9.]+/ {
+		if (match($0, /"rx_power_dbm"[ \t]*:[ \t]*-?[0-9.]+/)) {
+			s = substr($0, RSTART, RLENGTH); sub(/.*:[ \t]*/, "", s); rx = s
+		}
 	}
-	/"tx_power_dbm"[ \t]*:[ \t]*(-?[0-9.]+)/ {
-		match($0, /"tx_power_dbm"[ \t]*:[ \t]*(-?[0-9.]+)/, m); tx=sprintf("%.2f", m[1])
+	/"tx_power_dbm"[ \t]*:[ \t]*-?[0-9.]+/ {
+		if (match($0, /"tx_power_dbm"[ \t]*:[ \t]*-?[0-9.]+/)) {
+			s = substr($0, RSTART, RLENGTH); sub(/.*:[ \t]*/, "", s); tx = s
+		}
 	}
-	/"temperature_c"[ \t]*:[ \t]*(-?[0-9.]+)/ {
-		match($0, /"temperature_c"[ \t]*:[ \t]*(-?[0-9.]+)/, m); temp=sprintf("%.2f", m[1])
+	/"temperature_c"[ \t]*:[ \t]*-?[0-9.]+/ {
+		if (match($0, /"temperature_c"[ \t]*:[ \t]*-?[0-9.]+/)) {
+			s = substr($0, RSTART, RLENGTH); sub(/.*:[ \t]*/, "", s); temp = s
+		}
 	}
-	/"bias_current_ma"[ \t]*:[ \t]*(-?[0-9.]+)/ {
-		match($0, /"bias_current_ma"[ \t]*:[ \t]*(-?[0-9.]+)/, m); bias=sprintf("%.2f", m[1])
+	/"bias_current_ma"[ \t]*:[ \t]*-?[0-9.]+/ {
+		if (match($0, /"bias_current_ma"[ \t]*:[ \t]*-?[0-9.]+/)) {
+			s = substr($0, RSTART, RLENGTH); sub(/.*:[ \t]*/, "", s); bias = s
+		}
 	}
 	END {
 		if (ok) {
