@@ -88,9 +88,8 @@ get_config() {
 	case "$TIMEOUT" in
 		''|*[!0-9]*) TIMEOUT=3 ;;
 	esac
-	# The session holds its pipe open for READ_HOLD seconds, so a timeout at or
-	# below that would kill the exchange before the ONT had finished answering.
-	[ "$TIMEOUT" -lt $((READ_HOLD + 2)) ] && TIMEOUT=$((READ_HOLD + 2))
+	# Ensure socket timeout is at least 3 seconds and at most 30 seconds.
+	[ "$TIMEOUT" -lt 3 ] && TIMEOUT=3
 	[ "$TIMEOUT" -gt 30 ] && TIMEOUT=30
 }
 
@@ -139,9 +138,8 @@ refresh_async() {
 
 PARSER="/usr/share/vsol_ddm/parse.awk"
 
-# Seconds to hold the command pipe open after the last command, giving the ONT
-# time to finish replying. The whole exchange is separately bounded by TIMEOUT.
-READ_HOLD=2
+# Seconds to hold the command pipe open after pipelining commands.
+READ_HOLD="0.4"
 
 # Run one telnet session against the ONT and emit the dashboard JSON.
 #
@@ -342,21 +340,18 @@ fetch_omci() {
 		return
 	fi
 
-	if [ -f "$OMCI_CACHE" ] && [ -n "$(find "$OMCI_CACHE" -mmin -1 2>/dev/null)" ]; then
+	# Serve from cache if fresh (within 24 hours unless explicitly cleared on LOS)
+	if [ -f "$OMCI_CACHE" ] && [ -n "$(find "$OMCI_CACHE" -mmin -1440 2>/dev/null)" ]; then
 		cat "$OMCI_CACHE"
 		return
 	fi
 
 	_raw=$( {
 		printf '%s\r\n%s\r\n' "$USER" "$PASS"
-		sleep 2
-		for _class in $(echo "$OMCI_CLASSES" | tr ',' ' '); do
-			printf 'omcicli mib get %s\r\n' "$_class"
-			sleep "$OMCI_STEP"
-		done
-		printf 'exit\r\n'
-		sleep 1
-	} | timeout "$OMCI_TIMEOUT" nc "$HOST" "$PORT" 2>/dev/null |
+		sleep 0.2
+		printf 'omcicli mib get 11\r\nomcicli mib get 84\r\nomcicli mib get 131\r\nomcicli mib get 171\r\nomcicli mib get 329\r\nexit\r\n'
+		sleep 0.6
+	} | timeout 5 nc "$HOST" "$PORT" 2>/dev/null |
 	    tr -d '\377\376\375\374\373\372\371\r' )
 
 	# The top-level prompt confirms we authenticated and reached the CLI.
