@@ -1091,7 +1091,7 @@ return view.extend({
 
 		renderOmciCards(null, true);
 
-		/* ---------------- Time-series Canvas Renderer (24h Window) ------- */
+		/* ---------------- Time-series Canvas Renderer (Grafana Style) --- */
 		var renderChart = function(chartObj, dataHistory, thLo, thHi) {
 			var canvas = chartObj.canvas;
 			if (!canvas || !canvas.getContext) return;
@@ -1123,6 +1123,10 @@ return view.extend({
 				ctx.restore();
 				return;
 			}
+
+			// Dark plot background (Grafana style)
+			ctx.fillStyle = 'rgba(0, 0, 0, 0.16)';
+			ctx.fillRect(padL, padT, plotW, plotH);
 
 			// 24-Hour Fixed Window
 			var now = Date.now();
@@ -1186,6 +1190,36 @@ return view.extend({
 			if (maxEl) maxEl.textContent = 'Max: ' + maxVal.toFixed(1);
 			if (avgEl) avgEl.textContent = 'Avg: ' + avgValNum.toFixed(1);
 
+			// Draw subtle threshold warning/alarm bands (Grafana style)
+			if (thHi != null && isFinite(thHi) && thHi <= yMax) {
+				var tHiY = padT + plotH * (1 - (thHi - yMin) / (yMax - yMin));
+				var bandH = Math.max(0, tHiY - padT);
+				if (bandH > 0) {
+					ctx.fillStyle = 'rgba(255, 82, 82, 0.08)';
+					ctx.fillRect(padL, padT, plotW, bandH);
+				}
+				ctx.strokeStyle = 'rgba(255, 82, 82, 0.35)';
+				ctx.lineWidth = 1;
+				ctx.beginPath();
+				ctx.moveTo(padL, tHiY);
+				ctx.lineTo(padL + plotW, tHiY);
+				ctx.stroke();
+			}
+			if (thLo != null && isFinite(thLo) && thLo >= yMin) {
+				var tLoY = padT + plotH * (1 - (thLo - yMin) / (yMax - yMin));
+				var bBandH = Math.max(0, (padT + plotH) - tLoY);
+				if (bBandH > 0) {
+					ctx.fillStyle = 'rgba(255, 82, 82, 0.08)';
+					ctx.fillRect(padL, tLoY, plotW, bBandH);
+				}
+				ctx.strokeStyle = 'rgba(255, 82, 82, 0.35)';
+				ctx.lineWidth = 1;
+				ctx.beginPath();
+				ctx.moveTo(padL, tLoY);
+				ctx.lineTo(padL + plotW, tLoY);
+				ctx.stroke();
+			}
+
 			// Draw Grid lines & Y labels
 			ctx.strokeStyle = 'rgba(128, 128, 128, 0.12)';
 			ctx.lineWidth = 1;
@@ -1219,30 +1253,6 @@ return view.extend({
 				ctx.fillText(lbl, xx, padT + plotH + 16);
 			}
 
-			// Threshold guide lines (dashed)
-			if (thLo != null && isFinite(thLo) && thLo >= yMin && thLo <= yMax) {
-				var tLoY = padT + plotH * (1 - (thLo - yMin) / (yMax - yMin));
-				ctx.save();
-				ctx.setLineDash([4, 4]);
-				ctx.strokeStyle = 'rgba(255, 82, 82, 0.55)';
-				ctx.beginPath();
-				ctx.moveTo(padL, tLoY);
-				ctx.lineTo(padL + plotW, tLoY);
-				ctx.stroke();
-				ctx.restore();
-			}
-			if (thHi != null && isFinite(thHi) && thHi >= yMin && thHi <= yMax) {
-				var tHiY = padT + plotH * (1 - (thHi - yMin) / (yMax - yMin));
-				ctx.save();
-				ctx.setLineDash([4, 4]);
-				ctx.strokeStyle = 'rgba(255, 82, 82, 0.55)';
-				ctx.beginPath();
-				ctx.moveTo(padL, tHiY);
-				ctx.lineTo(padL + plotW, tHiY);
-				ctx.stroke();
-				ctx.restore();
-			}
-
 			// Map all points to 24-hour canvas coordinates with state evaluation
 			var points = [];
 			for (var p = 0; p < allSamples.length; p++) {
@@ -1255,12 +1265,12 @@ return view.extend({
 				points.push({ x: px, y: py, val: item.val, offline: isOffline, alarm: isAlarm });
 			}
 
-			// 1. Draw subtle area glow under valid connected points
+			// 1. Draw subtle area fill under valid connected points (only when spanning width > 4px)
 			var validPoints = points.filter(function(pt) { return !pt.offline; });
-			if (validPoints.length >= 2) {
+			if (validPoints.length >= 2 && (validPoints[validPoints.length - 1].x - validPoints[0].x) > 4) {
 				var grad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
-				grad.addColorStop(0, chartObj.color + '33');
-				grad.addColorStop(1, chartObj.color + '01');
+				grad.addColorStop(0, chartObj.color + '22');
+				grad.addColorStop(1, chartObj.color + '00');
 
 				ctx.beginPath();
 				ctx.moveTo(validPoints[0].x, padT + plotH);
@@ -1273,10 +1283,9 @@ return view.extend({
 				ctx.fill();
 			}
 
-			// 2. Draw segments with dynamic state colors:
-			//    - Grey dashed line for offline / unreachable
-			//    - Red line for values beyond or below limits
-			//    - Normal color for healthy operating values
+			// 2. Draw sleek continuous lines matching Grafana (1.8px width, no oversized dots)
+			ctx.lineJoin = 'round';
+			ctx.lineCap = 'round';
 			for (var s = 0; s < points.length - 1; s++) {
 				var pA = points[s];
 				var pB = points[s + 1];
@@ -1287,34 +1296,31 @@ return view.extend({
 
 				if (pA.offline || pB.offline) {
 					// Offline / unreachable state: grey dashed line
-					ctx.setLineDash([4, 4]);
-					ctx.strokeStyle = '#9e9e9e';
-					ctx.lineWidth = 1.8;
+					ctx.setLineDash([3, 3]);
+					ctx.strokeStyle = '#757575';
+					ctx.lineWidth = 1.5;
 				} else if (pA.alarm || pB.alarm) {
 					// Beyond or below limits: red solid line
 					ctx.setLineDash([]);
 					ctx.strokeStyle = '#ff5252';
-					ctx.lineWidth = 2.4;
+					ctx.lineWidth = 1.8;
 				} else {
-					// Normal healthy operating value: standard metric color
+					// Normal healthy operating value: standard sleek line
 					ctx.setLineDash([]);
 					ctx.strokeStyle = chartObj.color;
-					ctx.lineWidth = 2.2;
+					ctx.lineWidth = 1.8;
 				}
 				ctx.stroke();
 			}
 
-			// 3. Draw latest sample indicator dot
-			if (points.length > 0) {
-				var lastPt = points[points.length - 1];
+			// 3. For single isolated points (e.g. freshly started daemon), draw a neat small 1.5px dot
+			if (points.length === 1 || (points.length > 1 && (points[points.length - 1].x - points[0].x) <= 4)) {
+				var onlyPt = points[points.length - 1];
 				ctx.beginPath();
 				ctx.setLineDash([]);
-				ctx.arc(lastPt.x, lastPt.y, 4, 0, 2 * Math.PI);
-				ctx.fillStyle = lastPt.offline ? '#9e9e9e' : (lastPt.alarm ? '#ff5252' : chartObj.color);
+				ctx.arc(onlyPt.x, onlyPt.y, 2, 0, 2 * Math.PI);
+				ctx.fillStyle = onlyPt.offline ? '#757575' : (onlyPt.alarm ? '#ff5252' : chartObj.color);
 				ctx.fill();
-				ctx.strokeStyle = 'var(--background-color-high, #1e1e1e)';
-				ctx.lineWidth = 1.5;
-				ctx.stroke();
 			}
 
 			ctx.restore();
