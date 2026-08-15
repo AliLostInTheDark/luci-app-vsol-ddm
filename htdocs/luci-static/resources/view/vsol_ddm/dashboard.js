@@ -266,10 +266,10 @@ return view.extend({
 			/* Time-series charts section - 1 card with full width each */
 			' .hw-charts-wrap { flex: 1 1 100%; display: flex; flex-direction: column; align-items: stretch; gap: 20px; width: 100%; }' +
 			' .hw-chart-card { flex: 1 1 100%; width: 100%; min-width: 0; align-items: stretch; justify-content: flex-start; }' +
-			' .hw-chart-header { display: flex; justify-content: space-between; align-items: flex-start; width: 100%; gap: 10px; }' +
+			' .hw-chart-header { display: flex; justify-content: space-between; align-items: flex-start; width: 100%; gap: 10px; flex-wrap: wrap; }' +
 			' .hw-chart-metrics { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }' +
-			' .hw-chart-val { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 1.15em; font-weight: 700; line-height: 1.2; }' +
-			' .hw-chart-submetrics { display: flex; gap: 8px; font-size: 0.72em; opacity: 0.65; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }' +
+			' .hw-chart-val { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 1.15em; font-weight: 700; line-height: 1.2; transition: color 0.3s ease; }' +
+			' .hw-chart-submetrics { display: flex; gap: 8px; font-size: 0.72em; opacity: 0.65; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; flex-wrap: wrap; }' +
 			' .hw-card h3 { margin: 0 0 6px 0; min-height: 24px; line-height: 1.3; font-size: 1.00em; color: var(--text-color, inherit); opacity: 0.85; text-transform: uppercase; letter-spacing: 0.8px; text-align: center; word-break: break-word; font-weight: 700; }' +
 			' .hw-card-sub { margin: 0 0 14px 0; font-size: 0.72em; opacity: 0.62; text-align: center; line-height: 1.3; word-break: break-word; min-width: 0; }' +
 			' .hw-subtitle { margin: 0 0 14px 0; font-size: 0.72em; line-height: 1.3; letter-spacing: 0.4px; opacity: 0.6; text-align: center; word-break: break-word; min-width: 0; }' +
@@ -303,6 +303,10 @@ return view.extend({
 			'     white-space: nowrap !important; text-overflow: clip !important;' +
 			'     max-width: none !important; min-width: max-content !important; box-sizing: border-box !important; }' +
 			'   .cbi-page-actions, .right { display: flex !important; flex-wrap: wrap !important; gap: 6px !important; }' +
+			'   .hw-chart-header { flex-direction: column; align-items: flex-start; gap: 6px; }' +
+			'   .hw-chart-metrics { align-items: flex-start; }' +
+			'   .hw-chart-val { font-size: 1.20em; }' +
+			'   .hw-chart-submetrics { font-size: 0.78em; gap: 10px; }' +
 			' }' +
 			' @media (max-width: 480px) {' +
 			'   .hw-card { padding: 15px; }' +
@@ -1140,7 +1144,7 @@ return view.extend({
 			});
 
 			if (!validSamples.length) {
-				if (curEl) curEl.textContent = '--';
+				if (curEl) { curEl.textContent = '--'; curEl.style.color = '#9e9e9e'; }
 				if (minEl) minEl.textContent = 'Min: --';
 				if (maxEl) maxEl.textContent = 'Max: --';
 				if (avgEl) avgEl.textContent = 'Avg: --';
@@ -1177,7 +1181,14 @@ return view.extend({
 			var yMax = maxVal + yPad;
 
 			var latest = validSamples[validSamples.length - 1].val;
-			if (curEl) curEl.textContent = latest.toFixed(2) + ' ' + chartObj.unit;
+			var isLatestAlarm = ((thLo != null && latest < thLo) || (thHi != null && latest > thHi));
+			var isLatestWarn = (!isLatestAlarm && ((thLo != null && latest < thLo + 1.0) || (thHi != null && latest > thHi - 1.0)));
+			var headerColor = isLatestAlarm ? '#ff5252' : (isLatestWarn ? '#ffb300' : chartObj.color);
+
+			if (curEl) {
+				curEl.textContent = latest.toFixed(2) + ' ' + chartObj.unit;
+				curEl.style.color = headerColor;
+			}
 			if (minEl) minEl.textContent = 'Min: ' + minVal.toFixed(1);
 			if (maxEl) maxEl.textContent = 'Max: ' + maxVal.toFixed(1);
 			if (avgEl) avgEl.textContent = 'Avg: ' + avgValNum.toFixed(1);
@@ -1227,21 +1238,24 @@ return view.extend({
 				ctx.moveTo(padL, gy);
 				ctx.lineTo(padL + plotW, gy);
 				ctx.stroke();
-				ctx.fillText(gVal.toFixed(1), padL - 6, gy + 3);
+				ctx.fillText(gVal.toFixed(1), padL - 5, gy + 3);
 			}
 
-			// Draw X-axis 24-Hour Timeline Marks (-24h, -18h, -12h, -6h, Now)
+			// Draw X-axis 24-Hour Timeline Marks (-24h, -18h, -12h, -6h, Now) with zero overlap on mobile
 			ctx.textAlign = 'center';
-			var xSteps = 4;
-			var xLabels = [_('24h ago'), _('18h ago'), _('12h ago'), _('6h ago'), _('Now')];
+			var xSteps = (plotW < 360) ? 2 : 4;
 			for (var xs = 0; xs <= xSteps; xs++) {
 				var xx = padL + (plotW * xs / xSteps);
 				var curT = minTime + (WINDOW_MS * xs / xSteps);
 				var dObj = new Date(curT);
 				var hh = ('0' + dObj.getHours()).slice(-2);
 				var mm = ('0' + dObj.getMinutes()).slice(-2);
-				var lbl = xLabels[xs] + ' (' + hh + ':' + mm + ')';
-				if (xs === xSteps) lbl = _('Now') + ' (' + hh + ':' + mm + ')';
+				var lbl;
+				if (plotW < 360) {
+					lbl = (xs === 0 ? '-24h ' : (xs === xSteps ? _('Now ') : '-12h ')) + '(' + hh + ':' + mm + ')';
+				} else {
+					lbl = (xs === 0 ? _('24h ago') : (xs === xSteps ? _('Now') : (24 - xs * 6) + 'h ago')) + ' (' + hh + ':' + mm + ')';
+				}
 				ctx.fillText(lbl, xx, padT + plotH + 16);
 			}
 
@@ -1254,7 +1268,7 @@ return view.extend({
 				var valNum = isOffline ? yMin : item.val;
 				var py = padT + plotH * (1 - (valNum - yMin) / (yMax - yMin));
 				var isAlarm = (!isOffline && ((thLo != null && item.val < thLo) || (thHi != null && item.val > thHi)));
-				points.push({ x: px, y: py, val: item.val, offline: isOffline, alarm: isAlarm });
+				points.push({ x: px, y: py, val: item.val, time: item.time, offline: isOffline, alarm: isAlarm });
 			}
 
 			// 1. Draw subtle area fill under valid connected points (only when spanning width > 4px)
@@ -1275,7 +1289,7 @@ return view.extend({
 				ctx.fill();
 			}
 
-			// 2. Draw sleek continuous lines matching Grafana (1.8px width, no oversized dots)
+			// 2. Draw sleek continuous lines matching Grafana (1.8px width)
 			ctx.lineJoin = 'round';
 			ctx.lineCap = 'round';
 			for (var s = 0; s < points.length - 1; s++) {
@@ -1305,14 +1319,21 @@ return view.extend({
 				ctx.stroke();
 			}
 
-			// 3. For single isolated points (e.g. freshly started daemon), draw a neat small 1.5px dot
-			if (points.length === 1 || (points.length > 1 && (points[points.length - 1].x - points[0].x) <= 4)) {
-				var onlyPt = points[points.length - 1];
-				ctx.beginPath();
-				ctx.setLineDash([]);
-				ctx.arc(onlyPt.x, onlyPt.y, 2, 0, 2 * Math.PI);
-				ctx.fillStyle = onlyPt.offline ? '#757575' : (onlyPt.alarm ? '#ff5252' : chartObj.color);
-				ctx.fill();
+			// 3. Draw small Grafana point dots at 30-minute intervals (and endpoints)
+			var lastDotTime = -Infinity;
+			for (var d = 0; d < points.length; d++) {
+				var pt = points[d];
+				if (pt.offline) continue;
+				var ptTime = pt.time || (minTime + ((pt.x - padL) / plotW) * WINDOW_MS);
+				var is30m = (ptTime - lastDotTime >= 30 * 60 * 1000 - 15000) || (d === points.length - 1) || (d === 0);
+				if (is30m) {
+					lastDotTime = ptTime;
+					ctx.beginPath();
+					ctx.setLineDash([]);
+					ctx.arc(pt.x, pt.y, 2.0, 0, 2 * Math.PI);
+					ctx.fillStyle = pt.alarm ? '#ff5252' : chartObj.color;
+					ctx.fill();
+				}
 			}
 
 			ctx.restore();
