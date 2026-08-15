@@ -1,116 +1,195 @@
-# `luci-app-vsol-ddm`
+# luci-app-vsol-ddm
 
-**VSOL V2802RH 2.5G XPON ONT DDM & Optical Diagnostics Dashboard for OpenWrt LuCI**
+LuCI optical diagnostics for the **VSOL V2802RH** XPON ONT and other Realtek-based
+XPON ONUs. Reads DDM telemetry over the ONT's telnet CLI and renders it as a
+dashboard under **Status → VSOL V2802RH DDM**.
 
-A responsive hardware telemetry dashboard for OpenWrt routers to monitor VSOL V2802RH and Realtek RTL960x-based 2.5G XPON / GPON ONTs over fast Telnet CLI diagnostics.
+## Contents
 
----
+- [Highlights](#highlights)
+- [Installation](#installation)
+- [Supported devices](#supported-devices)
+- [Dashboard cards](#dashboard-cards)
+- [Settings](#settings)
+- [How it works](#how-it-works)
+- [Optical limits](#optical-limits)
+- [Development](#development)
+- [License](#license)
 
-## Features
+## Highlights
 
-- **Live DDM Telemetry**: Real-time Optical RX Power (dBm / µW), TX Power, Operating Temperature (°C / °F), Supply Voltage (VCC), and Laser Bias Current.
-- **Dual Measurement Engine**: Seamless toggle between `Dual (Metric / Imperial)`, `Metric (°C, dBm)`, and `Imperial (°F, µW)`.
-- **GPON & OMCI Identification**: Extracts GPON Serial Number (SN), MAC Address, Hardware Revision (`8671x`), Firmware Version (`V1.1.8`), and ITU-T G.984 ONU registration states (`O1` to `O7` / `Operation State (O5)`).
-- **Network & Traffic Monitoring**: LAN 2.5G & LAN 1G link speeds, Module CPU load (`1%`), and live status counters.
-- **SFF-8472 Diagnostic Limits Matrix**: Comprehensive threshold compliance table tracking High/Low Alarm and Warning bounds.
-- **Universal Multi-Theme Adaptability**: Designed with standard CSS variables for seamless compatibility across all LuCI themes (Argon, Bootstrap, Material, Rosy, OpenWrt 2020) in both Dark and Light modes.
-- **High-Performance Caching**: Instantaneous 0 ms initial dashboard rendering with client-side hydration and server-side rpcd session caching.
-- **Native LuCI Polling**: Integrated with LuCI's master `poll.add` lifecycle engine.
+- Receive and transmit optical power, transceiver temperature, supply voltage and
+  laser bias current, read live from the ONT.
+- Loss of Signal asserted on **both** sides of the receiver window — below
+  sensitivity and above overload — because a saturated receiver loses framing just
+  as thoroughly as a dark one.
+- The optical class is taken from what the optic reports about itself. A V2802RH
+  returns a vendor string of `ONU_B+_G`, so the class is read from the hardware
+  rather than assumed; when an optic says nothing, the dashboard labels the class
+  *assumed* rather than presenting it as confirmed.
+- Optical limits follow the **V2802RH datasheet**, not the class minima. The
+  datasheet's transmit window of 0…+4 dBm is narrower than the +0.5…+5 dBm that
+  ITU-T G.984.2 allows a Class B+ ONU in general, and grading against the vendor
+  figure is what tells you whether *this* optic is in spec.
+- A value the ONT did not report is shown as `--`, never as a plausible default
+  and never as a fake alarm.
+- Instant page load: a cached reading paints immediately and refreshes behind the
+  response, bounded so a dead link cannot masquerade as a healthy one.
 
----
+## Installation
 
-## Installation (OpenWrt `apk`)
+### One line, key and package together
 
-Modern OpenWrt snapshot and master releases use Alpine Package Keeper (`apk`).
+Installs the signing key, then fetches and installs the current release:
 
-### Trusted Installation with Signature Verification
+```sh
+wget -qO /etc/apk/keys/luci-app-vsol-ddm.pem https://raw.githubusercontent.com/AliLostInTheDark/luci-app-vsol-ddm/main/keys/luci-app-vsol-ddm.pem && wget -qO /tmp/vsol.apk "$(wget -qO- https://api.github.com/repos/AliLostInTheDark/luci-app-vsol-ddm/releases/latest | sed -n 's/.*"browser_download_url": *"\([^"]*\.apk\)".*/\1/p' | head -1)" && apk add /tmp/vsol.apk && rm -f /tmp/vsol.apk
+```
 
-Import the project's public signing key to enable standard trusted verification:
+### Manually, or from the LuCI Software page
 
-```bash
-# 1. Trust the signing key
+**Install the signing key first — once per router.** Every release is signed, so
+with the key in place `apk` accepts the package normally: no `--allow-untrusted`,
+and uploading the file on **System → Software** just works.
+
+```sh
 wget -qO /etc/apk/keys/luci-app-vsol-ddm.pem https://raw.githubusercontent.com/AliLostInTheDark/luci-app-vsol-ddm/main/keys/luci-app-vsol-ddm.pem
-
-# 2. Install the package
-apk add luci-app-vsol-ddm-1.0.0-r1.apk
 ```
 
-#### Key Verification
-`keys/luci-app-vsol-ddm.pem` is the **public** half of the EC keypair this package is signed with. You can verify its SHA-256 fingerprint before trusting:
-```
-090690322203551895a5ab1096e7abee6a0051448c423fd48315d15fe17b0e0c
-```
+Then install the latest `.apk` from the Releases page:
 
----
-
-## Development Deployment
-
-Deploy directly over SSH from this repository:
-
-```bash
-./deploy.sh <router-ip>
-# Example: ./deploy.sh 192.168.10.1
+```sh
+apk add ./luci-app-vsol-ddm-<version>.apk
 ```
 
----
+<details>
+<summary>What that key is, and what trusting it means</summary>
 
-## Architecture & File Hierarchy
+`keys/luci-app-vsol-ddm.pem` is the **public** half of the EC keypair this
+project signs with; the private half never leaves the build machine. Its SHA-256
+is `09069032 22035518 95a5ab10 96e7abee 6a005144 8c423fd4 8315d15f e17b0e0c`.
 
-```
-luci-app-vsol-ddm/
-├── Makefile                                     # OpenWrt package build definition
-├── deploy.sh                                    # Quick SSH synchronization script
-├── LICENSE                                      # Apache-2.0 License
-├── README.md                                    # Documentation
-├── keys/
-│   └── luci-app-vsol-ddm.pem                    # Verified public signing key
-├── src/
-│   └── vsol_query.c                             # Ultra-fast POSIX socket Telnet client
-├── htdocs/
-│   └── luci-static/resources/view/vsol_ddm/
-│       ├── dashboard.js                         # Main LuCI flexbox dashboard view
-│       └── settings.js                          # Configuration & connectivity view
-└── root/
-    ├── etc/
-    │   ├── config/vsol_ddm                      # UCI configuration file
-    │   └── uci-defaults/80_luci-app-vsol-ddm    # LuCI default permission bootstrap
-    ├── usr/
-    │   ├── libexec/rpcd/vsol_ddm                # Backend telemetry & session engine
-    │   └── share/
-    │       ├── luci/menu.d/luci-app-vsol-ddm.json # LuCI top navigation menu entry
-    │       └── rpcd/acl.d/luci-app-vsol-ddm.json  # ubus RPC access permissions
+Installing it into `/etc/apk/keys/` tells `apk` to accept packages signed by that
+key, which is the same trust model every OpenWrt package feed uses. It grants
+nothing else, and removing the file revokes it.
+
+`apk add --allow-untrusted ./luci-app-vsol-ddm-<version>.apk` still works and
+skips verification entirely.
+
+</details>
+
+### From source
+
+```sh
+git clone https://github.com/AliLostInTheDark/luci-app-vsol-ddm
+cp -r luci-app-vsol-ddm <openwrt>/package/luci-app-vsol-ddm
+make package/luci-app-vsol-ddm/compile V=s
 ```
 
----
+There is no compiled component, so this is a `PKGARCH:=all` package: one build
+installs on every architecture.
 
-## UCI Configuration (`/etc/config/vsol_ddm`)
+## Supported devices
 
-```uci
-config vsol_ddm 'main'
-	option enabled '1'
-	option host '192.168.100.1'
-	option port '23'
-	option username 'admin'
-	option password 'Admin@123'
-	option poll_interval '3'
-	option timeout '3'
-	option unit_system 'dual'
+Built for and tested against the **VSOL V2802RH** (1×XPON + 1×2.5GbE + 1×GE).
+It should work with other Realtek-based XPON ONUs exposing the same telnet CLI —
+the parser needs `pon get transceiver …` and `gpon get …` to behave as they do on
+the V2802RH.
+
+Verified against firmware `V1.1.8`, hardware `8671x`, on OpenWrt 25.12.
+
+## Dashboard cards
+
+**Received Optical Power (RX)** — current level, the usable receiver window
+(sensitivity to overload, which are the LOS assert points), signal quality and
+wavelength.
+
+**Transmitted Optical Power (TX)** — launch power against the datasheet window,
+transmitter state and wavelength.
+
+**Operating Temperature** — transceiver temperature, supply voltage and laser bias
+current. The datasheet ambient rating is shown for reference but is deliberately
+not used for grading: the DDM reading is the transceiver's *internal* temperature,
+which normally sits above ambient, so grading it against an ambient rating would
+raise alarms that mean nothing. Alarm bands follow SFF-8472.
+
+**OMCI Management** — activation state machine, registration, GPON serial number,
+OMCI vendor identifier, organisationally unique identifier, equipment identifier,
+manufacturer, registration password, equalisation delay, upstream PLOAM state,
+remote defect indication, downstream OMCI PTI, T-CONT allocations and GEM ports.
+
+**BOSA Laser & Optics** — optic model and vendor as reported, optical class,
+wavelengths, interface connector, supply voltage, laser bias, FEC and optical
+alarms.
+
+**Ethernet & Packet Statistics** — port status, MAC address, and packet, byte,
+error and dropped counters per direction.
+
+**System Information** — device model, firmware, hardware revision, CPU load,
+uptime and standards compliance.
+
+The four cards do not overlap: each covers one subsystem and nothing else.
+
+**SFF-8472 Diagnostic Threshold Limits** — every reading against its low alarm,
+low warning, high warning and high alarm. These come from the backend payload, so
+the table and the status badges cannot disagree.
+
+## Settings
+
+Under **Status → VSOL V2802RH DDM → Settings**: ONT address, telnet port,
+credentials, polling interval, connection timeout, unit system (dual, metric or
+imperial) and optical class.
+
+The optical class setting is a fallback. When the optic states its own class — as
+the V2802RH does — the hardware wins and the setting is ignored.
+
+Settings survive both package upgrade (`conffiles`) and firmware reflash
+(`/lib/upgrade/keep.d`).
+
+## How it works
+
+The backend is shell and `awk`. `/usr/libexec/rpcd/vsol_ddm` opens one telnet
+session to the ONT with BusyBox `nc`, pipelines every diagnostic command into it,
+strips the telnet control bytes, and hands the transcript to
+`/usr/share/vsol_ddm/parse.awk`, which emits the dashboard JSON. There is no
+compiled component, so a single package installs on every architecture.
+
+Commands are pipelined rather than issued one at a time because the ONT accepts
+only about **two concurrent telnet sessions** — a third connect times out. Two
+browser tabs polling independently were enough to starve any other caller and
+produce a spurious "unreachable" against a perfectly healthy ONT. Device access
+is therefore serialised behind a lock, and callers arriving during an in-flight
+query collapse onto its result rather than opening another session.
+
+## Optical limits
+
+| | value | source |
+|---|---|---|
+| RX sensitivity (LOS floor) | −27 dBm | V2802RH datasheet |
+| RX overload (LOS ceiling) | −8 dBm (GPON), −3 dBm (EPON) | V2802RH datasheet |
+| TX launch window | 0 … +4 dBm | V2802RH datasheet |
+| Wavelengths | TX 1310 nm, RX 1490 nm | V2802RH datasheet |
+| Temperature, voltage, bias | SFF-8472 | SFF-8472 |
+
+The ONT reports the PON port as **EPON PX20+ & GPON Class B+**. Warning bands are
+derived 1.0 dB inside each receiver alarm limit and 0.5 dB inside each transmitter
+alarm limit, so a warning band can never drift outside its own alarm band.
+
+The connector is **not** reported by the ONT — its CLI exposes only
+`bias-current`, `part-number`, `rx-power`, `sn`, `temperature`, `tx-power`,
+`vendor-name` and `voltage` — and the unit ships with either polish, so the
+dashboard states that it is unreported rather than guessing.
+
+## Development
+
+```sh
+./deploy.sh <router-ip>     # build, package and install over SSH
 ```
 
----
-
-## Backend RPC Interface (`ubus`)
-
-```bash
-# Query complete telemetry data
-ubus call vsol_ddm get_status
-
-# Test connection to VSOL ONT
-ubus call vsol_ddm test_connection
-```
-
----
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the check regime. The short version:
+every layer is a different language, each has been broken by an "obviously safe"
+edit, and CI parses each with the interpreter that will actually run it.
 
 ## License
 
-Licensed under the **Apache License, Version 2.0**.
+Apache-2.0. See [LICENSE](LICENSE).

@@ -1,95 +1,305 @@
 #!/bin/sh
 # VSOL V2802RH / Realtek ONU DDM & Optical Diagnostics rpcd backend
-# High-performance caching & telnet client integration
+#
+# Concurrency note: the ONT's telnet server accepts only a very small number of
+# simultaneous sessions -- measured at two on a V2802RH, with the third connect
+# attempt timing out. Two LuCI browser tabs polling at the configured interval
+# are therefore enough to starve any other caller, which surfaced as a spurious
+# "timed out or unreachable" even though the ONT was perfectly healthy.
+#
+# Every device query is consequently serialised behind a lock, and the cache is
+# re-checked once the lock is held: concurrent callers collapse onto a single
+# telnet session and then all read the same fresh result.
 
 UCI_CONFIG="vsol_ddm"
 CACHE_FILE="/tmp/vsol_ddm_cache.json"
-CACHE_TTL=1 # Cache valid for 1 second max
+LOCK_FILE="/tmp/vsol_ddm.lock"
+
+# Serving the dashboard from cache for the length of one poll interval keeps a
+# single viewer to one telnet session per poll instead of one per request.
+CACHE_TTL=2
+
+# Instant-load window.
+#
+# Opening the LuCI page should paint immediately rather than waiting out a telnet
+# round trip, so a cache entry older than CACHE_TTL is still served at once and a
+# refresh is kicked off in the background for the next poll.
+#
+# That trade is only safe while it stays bounded. Serving arbitrarily old data
+# would mean an ONT that died ten minutes ago still renders as a healthy link --
+# the same "failure disguised as data" this backend exists to avoid. Past
+# MAX_STALE the shortcut is abandoned and the caller waits for a real answer, so
+# a genuinely dead device surfaces as an error rather than as stale telemetry.
+MAX_STALE=30
+
+# Upper bound on how long a caller waits for an in-flight query, where the flock
+# implementation supports a timeout at all. Comfortably above the query time.
+LOCK_WAIT=6
+
+# BusyBox flock accepts only -s -x -u -n: there is no -w timeout option, and
+# passing one makes it exit with a usage error rather than taking the lock.
+# util-linux flock does support -w. Detect once, and fall back to a plain
+# blocking exclusive lock, which is safe here because every query is bounded by
+# the helper's own connect/read timeouts.
+if command -v flock >/dev/null 2>&1; then
+	HAVE_FLOCK=1
+	if flock -w 1 -u 0 2>/dev/null; then FLOCK_W=1; else FLOCK_W=0; fi
+else
+	HAVE_FLOCK=0
+	FLOCK_W=0
+fi
+
+# Acquire the exclusive lock on fd 9. Returns non-zero only if the lock could not
+# be taken; callers must then still perform the query rather than reporting a
+# device error, because failing to lock says nothing about the device.
+take_lock() {
+	if [ "$FLOCK_W" = "1" ]; then
+		flock -w "$LOCK_WAIT" 9
+	else
+		flock -x 9
+	fi
+}
+
+umask 077
 
 get_config() {
+	ENABLED="1"
+	HOST="192.168.100.1"
+	PORT="23"
+	USER="admin"
+	PASS="Admin@123"
+	TIMEOUT="3"
+	OPTICAL_CLASS="bplus"
+
 	if command -v uci >/dev/null 2>&1; then
-		ENABLED=$(uci -q get ${UCI_CONFIG}.main.enabled 2>/dev/null || echo "1")
-		HOST=$(uci -q get ${UCI_CONFIG}.main.host 2>/dev/null || echo "192.168.100.1")
-		PORT=$(uci -q get ${UCI_CONFIG}.main.port 2>/dev/null || echo "23")
-		USER=$(uci -q get ${UCI_CONFIG}.main.username 2>/dev/null || echo "admin")
-		PASS=$(uci -q get ${UCI_CONFIG}.main.password 2>/dev/null || echo "Admin@123")
-		TIMEOUT=$(uci -q get ${UCI_CONFIG}.main.timeout 2>/dev/null || echo "3")
-	else
-		ENABLED="1"
-		HOST="192.168.100.1"
-		PORT="23"
-		USER="admin"
-		PASS="Admin@123"
-		TIMEOUT="3"
+		v=$(uci -q get ${UCI_CONFIG}.main.enabled);       [ -n "$v" ] && ENABLED="$v"
+		v=$(uci -q get ${UCI_CONFIG}.main.host);          [ -n "$v" ] && HOST="$v"
+		v=$(uci -q get ${UCI_CONFIG}.main.port);          [ -n "$v" ] && PORT="$v"
+		v=$(uci -q get ${UCI_CONFIG}.main.username);      [ -n "$v" ] && USER="$v"
+		v=$(uci -q get ${UCI_CONFIG}.main.password);      [ -n "$v" ] && PASS="$v"
+		v=$(uci -q get ${UCI_CONFIG}.main.timeout);       [ -n "$v" ] && TIMEOUT="$v"
+		v=$(uci -q get ${UCI_CONFIG}.main.optical_class); [ -n "$v" ] && OPTICAL_CLASS="$v"
 	fi
+
+	case "$OPTICAL_CLASS" in
+		bplus|cplus|epon_px20) ;;
+		*) OPTICAL_CLASS="bplus" ;;
+	esac
+	case "$TIMEOUT" in
+		''|*[!0-9]*) TIMEOUT=3 ;;
+	esac
+	# The session holds its pipe open for READ_HOLD seconds, so a timeout at or
+	# below that would kill the exchange before the ONT had finished answering.
+	[ "$TIMEOUT" -lt $((READ_HOLD + 2)) ] && TIMEOUT=$((READ_HOLD + 2))
+	[ "$TIMEOUT" -gt 30 ] && TIMEOUT=30
+}
+
+# Age check against the cache file's modification time.
+cache_fresh() {
+	# cache_fresh <maximum age in seconds>
+	[ -f "$CACHE_FILE" ] || return 1
+	_now=$(date +%s)
+	_mt=$(date -r "$CACHE_FILE" +%s 2>/dev/null) || return 1
+	[ -n "$_mt" ] || return 1
+	[ $((_now - _mt)) -le "$1" ]
+}
+
+# Write a successful result to the cache atomically, so a concurrent reader can
+# never observe a half-written file.
+store_result() {
+	# store_result <json>
+	case "$1" in
+		*'"success": true'*)
+			printf '%s' "$1" > "${CACHE_FILE}.$$" 2>/dev/null &&
+				mv "${CACHE_FILE}.$$" "$CACHE_FILE" 2>/dev/null
+			rm -f "${CACHE_FILE}.$$" 2>/dev/null
+			return 0
+			;;
+	esac
+	return 1
+}
+
+# Refresh the cache without the caller waiting for it.
+#
+# Detached from rpcd's stdout: leaving the inherited descriptor open would make
+# ubus wait for this child before returning the response, which is exactly the
+# delay the background refresh exists to remove. The non-blocking lock means a
+# refresh already in flight is left to finish rather than starting a second
+# telnet session alongside it.
+refresh_async() {
+	(
+		exec >/dev/null 2>&1 </dev/null
+		if [ "$HAVE_FLOCK" = "1" ]; then
+			exec 9>"$LOCK_FILE"
+			flock -n 9 || exit 0
+		fi
+		store_result "$(do_query)"
+	) &
+}
+
+PARSER="/usr/share/vsol_ddm/parse.awk"
+
+# Seconds to hold the command pipe open after the last command, giving the ONT
+# time to finish replying. The whole exchange is separately bounded by TIMEOUT.
+READ_HOLD=2
+
+# Run one telnet session against the ONT and emit the dashboard JSON.
+#
+# The ONT speaks plain telnet with no negotiation of consequence, so BusyBox nc
+# is sufficient and the package needs no compiled helper: it installs on any
+# architecture. Commands are pipelined into a single session exactly as the
+# previous C client did, which is what keeps this to one connection and about a
+# third of a second rather than a round trip per command.
+#
+# The writer runs in the background feeding a FIFO so that nc keeps the socket
+# open while the ONT replies; a plain pipe would close stdin and the ONT would
+# hang up before answering. `timeout` bounds the whole exchange, standing in for
+# the non-blocking connect the C version performed.
+do_query() {
+	[ -f "$PARSER" ] || return 1
+
+	# A plain pipe, deliberately not a FIFO. Opening a FIFO for reading blocks
+	# until a writer opens it, so nc and the command writer can race on the open
+	# and deadlock; the trailing sleep simply holds the pipe open long enough for
+	# the ONT to finish replying before nc sees EOF and closes the socket.
+	#
+	# Commands are pipelined into one session exactly as the previous C client
+	# did, which is what keeps this to a single connection. That matters: the ONT
+	# accepts only about two concurrent telnet sessions.
+	#
+	# Telnet IAC bytes and CR are stripped by tr rather than in awk, because
+	# BusyBox awk rejects octal ranges inside bracket expressions and one parser
+	# has to run under gawk, mawk and BusyBox awk alike.
+	_raw=$( {
+		printf '%s\r\n%s\r\n' "$USER" "$PASS"
+		printf 'show version\r\ncpuocpy\r\nshow ethernet\r\ndiag\r\n'
+		printf 'pon get transceiver rx-power\r\npon get transceiver tx-power\r\n'
+		printf 'pon get transceiver temperature\r\npon get transceiver voltage\r\n'
+		printf 'pon get transceiver bias-current\r\npon get transceiver vendor-name\r\n'
+		printf 'pon get transceiver part-number\r\n'
+		printf 'gpon get onu-state\r\ngpon get serial-number\r\ngpon get alarm-status\r\n'
+		printf 'gpon get ds-phy\r\ngpon get eqd-offset\r\n'
+		printf 'gpon get us-ploam\r\ngpon get rdi\r\ngpon get ds-omci\r\ngpon get password\r\n'
+		printf 'gpon get ds-gem\r\n'
+		printf 'gpon get tcont alloc-id 256\r\ngpon get tcont alloc-id 257\r\n'
+		printf 'gpon get tcont alloc-id 258\r\ngpon get tcont alloc-id 259\r\n'
+		printf 'gpon get us-flow flow-id 0\r\ngpon get us-flow flow-id 1\r\n'
+		printf 'gpon get us-flow flow-id 2\r\ngpon get us-flow flow-id 3\r\n'
+		printf 'port get status port all\r\nexit\r\nexit\r\n'
+		sleep "$READ_HOLD"
+	} | timeout "$TIMEOUT" nc "$HOST" "$PORT" 2>/dev/null |
+	    tr -d '\377\376\375\374\373\372\371\r' )
+
+	# A session that never reached the CLI prompt read nothing worth parsing.
+	case "$_raw" in
+		*"RTK.0>"*) ;;
+		*) return 1 ;;
+	esac
+
+	printf '%s\n' "$_raw" | awk \
+		-v host="$HOST" -v ts="$(date +%s)" -v req_class="$OPTICAL_CLASS" \
+		-f "$PARSER"
 }
 
 fetch_telemetry() {
 	get_config
 
 	if [ "$ENABLED" != "1" ]; then
-		cat <<EOF
-{
-	"success": false,
-	"connected": false,
-	"error": "Monitoring has been disabled in configuration"
-}
-EOF
+		printf '{"success": false, "connected": false, "host": "%s", "error": "Monitoring has been disabled in configuration"}\n' "$HOST"
 		return
 	fi
 
-	# Return cached response if fresh (instant response)
-	if [ -f "$CACHE_FILE" ]; then
-		local CACHE_AGE=$(( $(date +%s) - $(date -r "$CACHE_FILE" +%s 2>/dev/null || echo 999) ))
-		if [ "$CACHE_AGE" -le "$CACHE_TTL" ]; then
-			cat "$CACHE_FILE"
-			return
+	# Fast path: fresh cache, no lock needed.
+	if cache_fresh "$CACHE_TTL"; then
+		cat "$CACHE_FILE"
+		return
+	fi
+
+	if [ ! -f "$PARSER" ]; then
+		printf '{"success": false, "connected": false, "host": "%s", "error": "parser %s is missing from the installation"}\n' "$HOST" "$PARSER"
+		return
+	fi
+
+	# Instant load: within the bounded staleness window, answer from cache right
+	# away and refresh behind the response. The page paints on the cached values
+	# and the next poll picks up the fresh ones.
+	if cache_fresh "$MAX_STALE"; then
+		cat "$CACHE_FILE"
+		refresh_async
+		return
+	fi
+
+	RES=""
+	GOT_LOCK=0
+	if [ "$HAVE_FLOCK" = "1" ]; then
+		# Serialise device access. Under the lock, re-check the cache: if another
+		# caller refreshed it while we waited, reuse that instead of opening a
+		# second telnet session for the same data.
+		exec 9>"$LOCK_FILE"
+		if take_lock; then
+			GOT_LOCK=1
+			if cache_fresh "$CACHE_TTL"; then
+				cat "$CACHE_FILE"
+				flock -u 9 2>/dev/null
+				exec 9>&-
+				return
+			fi
+			RES=$(do_query)
+			flock -u 9 2>/dev/null
 		fi
+		exec 9>&-
 	fi
 
-	local RES=""
-	if [ -x "/usr/bin/vsol_query" ]; then
-		RES=$(/usr/bin/vsol_query "$HOST" "$PORT" "$USER" "$PASS" "$TIMEOUT" 2>/dev/null)
-	elif [ -x "/usr/libexec/vsol_query" ]; then
-		RES=$(/usr/libexec/vsol_query "$HOST" "$PORT" "$USER" "$PASS" "$TIMEOUT" 2>/dev/null)
+	# No lock support, or the lock could not be taken. Query anyway: an unavailable
+	# lock is a statement about this script, not about the ONT, and reporting it as
+	# a device failure would be a lie.
+	if [ "$GOT_LOCK" != "1" ] && [ -z "$RES" ]; then
+		RES=$(do_query)
 	fi
 
-	if [ -n "$RES" ] && echo "$RES" | grep -q '"success": true'; then
-		echo "$RES" > "$CACHE_FILE"
+	if [ -n "$RES" ] && store_result "$RES"; then
+		echo "$RES"
+		return
+	fi
+
+	# The query failed and control only reaches here when the cache was already
+	# older than MAX_STALE -- anything newer was served by the instant-load path
+	# above, which is what absorbs an isolated dropped poll. Replaying a cache
+	# that old would render a link that has been down for minutes as healthy, so
+	# the failure is reported instead. The dashboard shows an error banner rather
+	# than telemetry that is no longer true.
+	if [ -n "$RES" ]; then
+		# The helper produced its own structured error; pass it through verbatim.
 		echo "$RES"
 	else
-		# Return stale cache as fallback if query failed
-		if [ -f "$CACHE_FILE" ]; then
-			cat "$CACHE_FILE"
-			return
-		fi
-
-		cat <<EOF
-{
-	"success": false,
-	"connected": false,
-	"host": "$HOST",
-	"error": "Unable to connect or authenticate to VSOL ONT at $HOST:$PORT"
-}
-EOF
+		printf '{"success": false, "connected": false, "host": "%s", "error": "Unable to connect or authenticate to VSOL ONT at %s:%s"}\n' \
+			"$HOST" "$HOST" "$PORT"
 	fi
 }
 
 test_connection() {
 	get_config
-	if [ -x "/usr/bin/vsol_query" ]; then
-		/usr/bin/vsol_query "$HOST" "$PORT" "$USER" "$PASS" "$TIMEOUT" --test
-	elif [ -x "/usr/libexec/vsol_query" ]; then
-		/usr/libexec/vsol_query "$HOST" "$PORT" "$USER" "$PASS" "$TIMEOUT" --test
+
+	# Takes the same lock: a connectivity test must not itself become the session
+	# that tips the ONT over its concurrent-session limit.
+	if [ "$HAVE_FLOCK" = "1" ]; then
+		exec 9>"$LOCK_FILE"
+		take_lock
+	fi
+
+	_out=$(do_query)
+	_rc=$?
+
+	if [ "$HAVE_FLOCK" = "1" ]; then
+		flock -u 9 2>/dev/null
+		exec 9>&-
+	fi
+
+	if [ "$_rc" -eq 0 ] && [ -n "$_out" ]; then
+		printf '{"success": true, "connected": true, "host": "%s", "message": "Connected and authenticated over telnet"}\n' "$HOST"
 	else
-		cat <<EOF
-{
-	"success": false,
-	"connected": false,
-	"host": "$HOST",
-	"message": "vsol_query binary helper not found"
-}
-EOF
+		printf '{"success": false, "connected": false, "host": "%s", "error": "Unable to connect or authenticate to the ONT at %s:%s"}\n' \
+			"$HOST" "$HOST" "$PORT"
 	fi
 }
 

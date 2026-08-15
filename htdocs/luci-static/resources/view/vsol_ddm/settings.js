@@ -23,7 +23,7 @@ return view.extend({
 
 		o = s.option(form.Flag, 'enabled', _('Enable Telemetry Polling'),
 			_('Enable background telemetry extraction from the VSOL ONT.'));
-		o.default = o.enabled;
+		o.default = '1';
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'host', _('ONT IP Address'),
@@ -56,6 +56,14 @@ return view.extend({
 		o.value('imperial', _('Imperial Only (°F, µW)'));
 		o.default = 'dual';
 
+		o = s.option(form.ListValue, 'optical_class', _('Optical Class'),
+			_('Transceiver optical class. This selects the receiver sensitivity and overload limits used as the Loss of Signal assert points, and the transmit launch power window. Leave at GPON Class B+ unless your ONT stick is documented otherwise.'));
+		o.value('bplus', _('GPON Class B+ (ITU-T G.984.2)'));
+		o.value('cplus', _('GPON Class C+ (ITU-T G.984.2 Amd.2)'));
+		o.value('epon_px20', _('EPON 1000BASE-PX20-U (IEEE 802.3ah)'));
+		o.default = 'bplus';
+		o.rmempty = false;
+
 		o = s.option(form.ListValue, 'poll_interval', _('Polling Interval'),
 			_('Frequency of background telemetry collection.'));
 		o.value('1', _('1 second (Real-Time)'));
@@ -66,8 +74,8 @@ return view.extend({
 		o.default = '3';
 
 		o = s.option(form.Value, 'timeout', _('Connection Timeout (seconds)'),
-			_('Socket timeout duration when connecting to the ONT.'));
-		o.datatype = 'uinteger';
+			_('Socket timeout duration when connecting to the ONT (1 to 30 seconds).'));
+		o.datatype = 'range(1,30)';
 		o.default = '3';
 
 		o = s.option(form.Button, '_test', _('Test Connection'),

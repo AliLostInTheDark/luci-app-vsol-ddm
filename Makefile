@@ -11,12 +11,18 @@ PKG_VERSION:=1.0.0
 PKG_RELEASE:=1
 
 PKG_LICENSE:=Apache-2.0
+PKG_LICENSE_FILES:=LICENSE
 PKG_MAINTAINER:=OpenWrt LuCI community
+PKG_URL:=https://github.com/AliLostInTheDark/luci-app-vsol-ddm
 
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG_NAME)
 
 include $(INCLUDE_DIR)/package.mk
 
+# This package is architecture-independent. The telemetry helper used to be a
+# compiled C telnet client, which forced a per-architecture build; it is now
+# shell and awk driving BusyBox nc, so one package installs on every target -
+# the same arrangement luci-app-hw-dashboard uses.
 define Package/luci-app-vsol-ddm
   SECTION:=luci
   CATEGORY:=LuCI
@@ -30,22 +36,29 @@ define Package/luci-app-vsol-ddm/description
   LuCI hardware telemetry dashboard for VSOL V2802RH and Realtek-based 2.5G XPON ONTs.
 endef
 
+# Retained across package upgrade. Sysupgrade retention is handled separately by
+# /lib/upgrade/keep.d/luci-app-vsol-ddm, installed below.
 define Package/luci-app-vsol-ddm/conffiles
 /etc/config/vsol_ddm
 endef
 
+# Unconditional on purpose: a missing source file must fail the build here,
+# rather than being hidden by "|| true" and resurfacing as a confusing
+# compiler error in the next step.
 define Build/Prepare
 	mkdir -p $(PKG_BUILD_DIR)
-	$(CP) ./src/* $(PKG_BUILD_DIR)/ 2>/dev/null || true
 endef
 
+# -lm: the helper uses isnan()/isinf() from <math.h>. GCC inlines both at -O2,
+# which is why an -O2 build links without it, but that is a compiler
+# optimisation and not a guarantee -- at -O0, or with a toolchain that emits
+# real calls, the link fails. deploy.sh links with -lm too; keep the two in step.
 define Build/Compile
-	$(TARGET_CC) $(TARGET_CFLAGS) -O2 -Wall $(PKG_BUILD_DIR)/vsol_query.c -o $(PKG_BUILD_DIR)/vsol_query
 endef
 
 define Package/luci-app-vsol-ddm/install
-	$(INSTALL_DIR) $(1)/usr/bin
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/vsol_query $(1)/usr/bin/vsol_query
+	$(INSTALL_DIR) $(1)/usr/share/vsol_ddm
+	$(INSTALL_DATA) ./root/usr/share/vsol_ddm/parse.awk $(1)/usr/share/vsol_ddm/parse.awk
 
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/vsol_ddm
 	$(INSTALL_DATA) ./htdocs/luci-static/resources/view/vsol_ddm/* $(1)/www/luci-static/resources/view/vsol_ddm/
@@ -55,6 +68,9 @@ define Package/luci-app-vsol-ddm/install
 
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./root/etc/uci-defaults/* $(1)/etc/uci-defaults/
+
+	$(INSTALL_DIR) $(1)/lib/upgrade/keep.d
+	$(INSTALL_DATA) ./root/lib/upgrade/keep.d/luci-app-vsol-ddm $(1)/lib/upgrade/keep.d/luci-app-vsol-ddm
 
 	$(INSTALL_DIR) $(1)/usr/libexec/rpcd
 	$(INSTALL_BIN) ./root/usr/libexec/rpcd/* $(1)/usr/libexec/rpcd/

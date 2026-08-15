@@ -1,0 +1,10 @@
+# Paths preserved across sysupgrade (OpenWrt /lib/upgrade/keep.d mechanism).
+#
+# /etc/config/* is already carried by base-files' own keep list, so this entry
+# is belt-and-braces: it keeps the setting file surviving even on an image whose
+# base keep list has been trimmed, and it documents the dependency explicitly.
+#
+# Package upgrade (apk/opkg) is a separate mechanism, handled by the conffiles
+# stanza in the Makefile. Both are needed: conffiles covers "upgrade the
+# package", this file covers "reflash the firmware".
+/etc/config/vsol_ddm

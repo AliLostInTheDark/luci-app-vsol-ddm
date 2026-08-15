@@ -1,4 +1,41 @@
 #!/bin/sh
-# Flush LuCI and rpcd caches upon installation / upgrade
+# Runs once on install/upgrade, then removes itself.
+#
+# Additive and idempotent by design: every option is only written when it is
+# absent. An upgrade must never clobber a value the user has already set, but it
+# must still seed options that did not exist in the previous version -- otherwise
+# a new setting (optical_class) shows up blank in the UI on upgraded routers
+# while working fine on fresh installs.
+
+CFG=vsol_ddm
+
+# Ensure the section exists before touching options. On a fresh install the
+# packaged /etc/config/vsol_ddm already provides it; on an upgrade from a build
+# whose conffile was removed by hand it may not.
+if ! uci -q get ${CFG}.main >/dev/null 2>&1; then
+	uci -q set ${CFG}.main=${CFG}
+fi
+
+set_default() {
+	# $1 = option, $2 = default value
+	if [ -z "$(uci -q get ${CFG}.main.$1)" ]; then
+		uci -q set ${CFG}.main.$1="$2"
+	fi
+}
+
+set_default enabled       1
+set_default host          192.168.100.1
+set_default port          23
+set_default username      admin
+set_default password      Admin@123
+set_default poll_interval 3
+set_default timeout       3
+set_default unit_system   dual
+set_default optical_class bplus
+
+uci -q commit ${CFG}
+
+# Flush LuCI and rpcd caches so the new view and ACL are picked up.
 rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache* /tmp/vsol_ddm_cache.json /tmp/luci-sessions/*
+
 exit 0

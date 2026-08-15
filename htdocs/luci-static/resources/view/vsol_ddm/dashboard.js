@@ -2,7 +2,6 @@
 'require view';
 'require rpc';
 'require poll';
-'require dom';
 'require uci';
 
 var callGetStatus = rpc.declare({
@@ -10,6 +9,126 @@ var callGetStatus = rpc.declare({
 	method: 'get_status',
 	expect: {}
 });
+
+/* ------------------------------------------------------------------------
+ * Severity palette.
+ * Every quality evaluator returns ALL five keys on EVERY return path:
+ *   { color, bg, label, badge, severity }
+ * A badge background must always come from this object, never from the
+ * initial markup, otherwise it goes stale when the severity changes.
+ * ---------------------------------------------------------------------- */
+var SEVERITY = {
+	alarm:   { color: '#ff5252', bg: 'rgba(255,82,82,0.16)' },
+	warn:    { color: '#ffb300', bg: 'rgba(255,179,0,0.16)' },
+	optimal: { color: '#8bc34a', bg: 'rgba(139,195,74,0.16)' },
+	off:     { color: '#9e9e9e', bg: 'rgba(158,158,158,0.18)' }
+};
+
+/* Accent used for purely informational (non-graded) values. */
+var ACCENT = '#00bcd4';
+
+var quality = function(severity, label, badge) {
+	var s = SEVERITY[severity] || SEVERITY.off;
+	return { color: s.color, bg: s.bg, label: label, badge: badge, severity: severity };
+};
+
+/* ------------------------------------------------------------------------
+ * Optical class profiles. These are the ONLY optical figures used locally,
+ * and they are used solely as a fallback when the backend does not supply a
+ * `thresholds` block (older firmware helper still installed).
+ * When the backend does supply thresholds, the payload wins for BOTH the
+ * matrix table and the evaluator bands, so the two can never disagree.
+ * ---------------------------------------------------------------------- */
+var OPTICAL_PROFILES = {
+	/* GPON, ITU-T G.984.2 Class B+ (default) */
+	bplus: {
+		citation: 'ITU-T G.984.2 Class B+',
+		rx_low_alarm: -27.0,	/* ONU receiver sensitivity  - LOS assert floor   */
+		rx_high_alarm: -8.0,	/* ONU receiver overload     - LOS assert ceiling */
+		tx_low_alarm: 0.5,	/* ONU minimum launch power  */
+		tx_high_alarm: 5.0,	/* ONU maximum launch power  */
+		wavelength_rx_nm: 1490,
+		wavelength_tx_nm: 1310
+	},
+	/* GPON, ITU-T G.984.2 Amendment 2 Class C+ */
+	cplus: {
+		citation: 'ITU-T G.984.2 Amd.2 Class C+',
+		rx_low_alarm: -32.0,
+		rx_high_alarm: -12.0,
+		tx_low_alarm: 0.5,
+		tx_high_alarm: 5.0,
+		wavelength_rx_nm: 1490,
+		wavelength_tx_nm: 1310
+	},
+	/* EPON, IEEE 802.3ah 1000BASE-PX20-U (ONU side) */
+	epon_px20: {
+		citation: 'IEEE 802.3ah 1000BASE-PX20-U',
+		rx_low_alarm: -24.0,
+		rx_high_alarm: -3.0,
+		tx_low_alarm: 2.0,
+		tx_high_alarm: 7.0,
+		wavelength_rx_nm: 1490,
+		wavelength_tx_nm: 1310
+	}
+};
+
+/* Non-optical transceiver diagnostics, SFF-8472 (class independent). */
+var SFF8472 = {
+	citation: 'SFF-8472',
+	temp_low_alarm: -40.0,
+	temp_low_warn: -10.0,
+	temp_high_warn: 75.0,
+	temp_high_alarm: 85.0,
+	volt_low_alarm: 2.90,
+	volt_low_warn: 3.05,
+	volt_high_warn: 3.55,
+	volt_high_alarm: 3.70,
+	bias_low_alarm: 1.0,
+	bias_low_warn: 2.0,
+	bias_high_warn: 60.0,
+	bias_high_alarm: 70.0
+};
+
+/* Warning margin is 1.0 dB inside each optical receive alarm limit and
+ * 0.5 dB inside each optical transmit alarm limit. */
+var RX_WARN_MARGIN_DB = 1.0;
+var TX_WARN_MARGIN_DB = 0.5;
+
+/* Below this the fibre is considered dark - reported as LOS, not as a value. */
+var DARK_FIBRE_DBM = -35.0;
+/* At or below this the upstream laser is treated as switched off. */
+var LASER_OFF_DBM = -35.0;
+
+var num = function(v) {
+	if (v === null || v === undefined || v === '') return NaN;
+	var n = parseFloat(v);
+	return isNaN(n) ? NaN : n;
+};
+
+/* Return the first finite value found under any of `names`, else null. */
+var pickNum = function(obj, names) {
+	if (!obj) return null;
+	for (var i = 0; i < names.length; i++) {
+		var n = num(obj[names[i]]);
+		if (!isNaN(n)) return n;
+	}
+	return null;
+};
+
+var pickStr = function(obj, names) {
+	if (!obj) return null;
+	for (var i = 0; i < names.length; i++) {
+		var v = obj[names[i]];
+		if (typeof v === 'string' && v !== '') return v;
+	}
+	return null;
+};
+
+var opticalClassLabel = function(cls) {
+	if (cls === 'cplus') return _('GPON Class C+');
+	if (cls === 'epon_px20') return _('EPON 1000BASE-PX20+');
+	return _('GPON Class B+');
+};
 
 return view.extend({
 	unitSystem: 'dual',
@@ -23,11 +142,19 @@ return view.extend({
 
 	render: function(data) {
 		var self = this;
-		var uciConfig = data[0];
 		var initialStatus = data[1] || {};
-		var pollInterval = parseInt(uci.get('vsol_ddm', 'main', 'poll_interval')) || 3;
-		// Unit system is managed exclusively via Settings (UCI)
+
+		/* Polling interval is clamped to 1..60 seconds. */
+		var pollInterval = parseInt(uci.get('vsol_ddm', 'main', 'poll_interval'), 10);
+		if (isNaN(pollInterval)) pollInterval = 3;
+		pollInterval = Math.max(1, Math.min(60, pollInterval));
+
+		/* Unit system is managed exclusively via Settings (UCI). */
 		self.unitSystem = uci.get('vsol_ddm', 'main', 'unit_system') || 'dual';
+
+		var uciOpticalClass = uci.get('vsol_ddm', 'main', 'optical_class') || 'bplus';
+
+		/* Purge telemetry caches written by earlier releases. */
 		if (window.localStorage) {
 			try {
 				window.localStorage.removeItem('vsol_unit_system');
@@ -42,47 +169,87 @@ return view.extend({
 
 		var style = E('style', {},
 			' .hw-dashboard { display: flex; flex-wrap: wrap; align-items: stretch; gap: 20px; padding: 15px; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; width: 100%; max-width: 100%; overflow: hidden; color: var(--text-color, inherit); }' +
-			' .hw-dashboard * { box-sizing: border-box; }' +
-			' .hw-thermals-container { display: flex; flex-direction: row; width: 100%; height: 100%; }' +
-			' .hw-thermals-col { flex: 1; min-width: 0; }' +
-			' .hw-thermals-col-left { padding-right: 15px; }' +
-			' .hw-thermals-col-mid { padding: 0 15px; }' +
-			' .hw-thermals-col-right { padding-left: 15px; }' +
-			' .hw-thermals-title { font-size: 0.85em; opacity: 0.65; margin-bottom: 14px; text-transform: uppercase; letter-spacing: 0.8px; font-weight: 700; text-align: center; }' +
-			' .hw-thermals-divider { width: 1px; background: var(--border-color, rgba(128,128,128,0.18)); margin: 10px 15px; }' +
-			' @media (max-width: 768px) { .hw-thermals-container { flex-direction: column; } .hw-thermals-col { padding: 0 !important; } .hw-thermals-divider { width: auto; height: 1px; margin: 18px 0; } }' +
-			' .hw-card { flex: 1 1 280px; background: var(--background-color-high, rgba(128, 128, 128, 0.05)); border: 1px solid var(--border-color, rgba(128, 128, 128, 0.18)); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; color: var(--text-color, inherit); position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.06); max-width: 100%; overflow: hidden; }' +
+			/* The container itself must be included, not just its descendants: it
+			 * carries width:100% AND padding, so leaving it content-box makes the
+			 * page exceed the viewport by exactly its own padding and scroll
+			 * sideways at tablet widths. */
+			' .hw-dashboard, .hw-dashboard * { box-sizing: border-box; }' +
+			' .hw-banner { flex: 1 1 100%; width: 100%; border-radius: 10px; padding: 12px 16px; font-size: 0.9em; font-weight: 600; line-height: 1.4; word-break: break-word; border: 1px solid rgba(255,82,82,0.45); background: rgba(255,82,82,0.16); color: #ff5252; }' +
+			' .hw-dashboard.hw-offline .hw-dial { opacity: 0.4; filter: grayscale(1); }' +
+			' .hw-card { flex: 1 1 320px; min-width: 0; background: var(--background-color-high, rgba(128, 128, 128, 0.05)); border: 1px solid var(--border-color, rgba(128, 128, 128, 0.18)); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; color: var(--text-color, inherit); position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.06); max-width: 100%; overflow: hidden; }' +
 			' .hw-card.wide { flex: 1 1 100%; align-items: stretch; }' +
+			/* A card that occupies a full row would otherwise strand each label
+			 * at the far left and its value at the far right. Flowing the pairs
+			 * into columns keeps them readable at any width. */
+			' .hw-kv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 28px; width: 100%; }' +
 			' .hw-card.half { flex: 1 1 calc(50% - 10px); align-items: stretch; }' +
-			' @media (max-width: 480px) { .hw-card { padding: 15px; } .hw-card.half { flex-basis: 100%; } .hw-dial { transform: scale(0.9); } }' +
-			' .hw-card h3 { margin: 0 0 16px 0; font-size: 1.05em; color: var(--text-color, inherit); opacity: 0.85; text-transform: uppercase; letter-spacing: 1px; text-align: center; word-break: break-word; line-height: 1.3; font-weight: 700; }' +
+			' .hw-card h3 { margin: 0 0 6px 0; min-height: 24px; line-height: 1.3; font-size: 1.00em; color: var(--text-color, inherit); opacity: 0.85; text-transform: uppercase; letter-spacing: 0.8px; text-align: center; word-break: break-word; font-weight: 700; }' +
+			' .hw-card-sub { margin: 0 0 14px 0; font-size: 0.72em; opacity: 0.62; text-align: center; line-height: 1.3; word-break: break-word; min-width: 0; }' +
+			' .hw-subtitle { margin: 0 0 14px 0; font-size: 0.72em; line-height: 1.3; letter-spacing: 0.4px; opacity: 0.6; text-align: center; word-break: break-word; min-width: 0; }' +
 			' .hw-dial { position: relative; width: 160px; height: 160px; display: flex; align-items: center; justify-content: center; margin: 0 auto; background: transparent !important; }' +
-			' .hw-dial svg { position: absolute; top: 0; left: 0; width: 160px; height: 160px; transform: rotate(-90deg); background: transparent !important; }' +
+			' .hw-dial svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform: rotate(-90deg); background: transparent !important; }' +
 			' .hw-dial-bg { fill: none; stroke: var(--border-color, rgba(128, 128, 128, 0.2)); stroke-width: 10; }' +
 			' .hw-dial-progress { fill: none; stroke-width: 10; stroke-linecap: round; transition: stroke-dasharray 0.5s ease, stroke 0.5s ease; }' +
-			' .hw-dial-center { position: absolute; top: 0; left: 0; width: 160px; height: 160px; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; text-align: center; pointer-events: none; box-sizing: border-box; padding: 0 5px; }' +
-			' .hw-dial-line { font-size: 1.16em; font-weight: 700; letter-spacing: -0.3px; line-height: 1.25; white-space: nowrap; }' +
-			' .hw-dial-single { font-size: 1.32em; font-weight: 700; letter-spacing: -0.3px; line-height: 1.2; white-space: nowrap; }' +
-			' .hw-status-pill { margin-top: 10px; margin-bottom: 12px; padding: 4px 14px; border-radius: 9999px; font-size: 0.76em; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; display: inline-flex; align-items: center; justify-content: center; text-align: center; white-space: nowrap; }' +
-			' .hw-stats-list { width: 100%; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-color, rgba(128, 128, 128, 0.12)); padding-top: 14px; margin-top: 2px; }' +
-			' .hw-stat-row { display: flex; justify-content: space-between; align-items: center; width: 100%; min-width: 0; }' +
-			' .hw-stat-label { opacity: 0.7; font-size: 0.85em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1 1 auto; margin-right: 8px; }' +
-			' .hw-stat-value { font-weight: 700; font-size: 0.88em; white-space: nowrap; font-family: ui-monospace, monospace; flex: 0 0 auto; text-align: right; color: var(--text-color, inherit); }' +
-			' .hw-temp-badge { padding: 4px 10px; border-radius: 6px; font-weight: 700; font-size: 0.82em; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px; display: inline-flex; align-items: center; justify-content: center; }' +
-			' .hw-temp-crit { animation: hwTempPulse 1.1s ease-in-out infinite; }' +
-			' @keyframes hwTempPulse { 0%, 100% { box-shadow: 0 0 3px rgba(225,29,72,0.5); } 50% { box-shadow: 0 0 14px rgba(225,29,72,0.95); } }' +
-			' .hw-kv { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; margin-bottom: 9px; }' +
-			' .hw-kv-k { font-size: 0.75em; opacity: 0.6; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; flex: 0 0 auto; }' +
-			' .hw-kv-v { text-align: right; font-family: ui-monospace, monospace; font-size: 0.88em; font-weight: 600; word-break: break-all; color: var(--text-color, inherit); }' +
-			' .hw-table { width: 100%; border-collapse: collapse; font-size: 0.88em; }' +
-			' .hw-table th, .hw-table td { padding: 9px 12px; border-bottom: 1px solid var(--border-color, rgba(128, 128, 128, 0.15)); text-align: left; }' +
+			' .hw-dial-center { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; text-align: center; pointer-events: none; box-sizing: border-box; padding: 0 5px; }' +
+			' .hw-dial-line { font-size: 1.15em; font-weight: 700; letter-spacing: -0.3px; line-height: 1.25; white-space: nowrap; }' +
+			' .hw-dial-single { font-size: 1.30em; font-weight: 700; letter-spacing: -0.3px; line-height: 1.2; white-space: nowrap; }' +
+			' .hw-status-pill { min-height: 24px; line-height: 1.3; padding: 4px 14px; margin-top: 10px; margin-bottom: 12px; border-radius: 9999px; font-size: 0.76em; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; display: inline-flex; align-items: center; justify-content: center; text-align: center; word-break: break-word; box-sizing: border-box; max-width: 100%; }' +
+			' .hw-stats-list { width: 100%; display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border-color, rgba(128, 128, 128, 0.12)); padding-top: 14px; margin-top: 2px; }' +
+			' .hw-stat-row { display: flex; justify-content: space-between; align-items: baseline; width: 100%; min-height: 22px; line-height: 1.3; min-width: 0; gap: 8px; box-sizing: border-box; }' +
+			' .hw-stat-label { opacity: 0.7; font-size: 0.84em; white-space: normal; overflow-wrap: anywhere; flex: 0 1 auto; min-width: 0; line-height: 1.3; }' +
+			' .hw-stat-value { font-weight: 700; font-size: 0.86em; white-space: normal; overflow-wrap: anywhere; word-break: normal; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; flex: 1 1 auto; min-width: 0; text-align: right; line-height: 1.35; color: var(--text-color, inherit); }' +
+			' .hw-temp-badge { padding: 2px 8px; border-radius: 6px; font-weight: 700; font-size: 0.78em; white-space: nowrap; text-transform: uppercase; letter-spacing: 0.5px; display: inline-flex; align-items: center; justify-content: center; min-height: 22px; line-height: 1.3; box-sizing: border-box; max-width: 100%; }' +
+			' .hw-temp-crit { animation: hwAlarmBreath 2.2s cubic-bezier(0.4, 0, 0.6, 1) infinite !important; will-change: box-shadow, background-color, opacity; }' +
+			' @keyframes hwAlarmBreath { 0% { background-color: rgba(255, 82, 82, 0.16); box-shadow: 0 0 2px rgba(255, 82, 82, 0.3); opacity: 0.88; } 50% { background-color: rgba(255, 82, 82, 0.38); box-shadow: 0 0 12px 2px rgba(255, 82, 82, 0.65); opacity: 1; } 100% { background-color: rgba(255, 82, 82, 0.16); box-shadow: 0 0 2px rgba(255, 82, 82, 0.3); opacity: 0.88; } }' +
+			' .hw-kv { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; width: 100%; min-height: 26px; line-height: 1.3; margin-bottom: 6px; min-width: 0; box-sizing: border-box; }' +
+			' .hw-kv-k { font-size: 0.76em; opacity: 0.65; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; flex: 0 1 auto; min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.3; }' +
+			' .hw-kv-v { text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.85em; font-weight: 600; white-space: normal; overflow-wrap: anywhere; word-break: normal; flex: 1 1 auto; min-width: 0; line-height: 1.35; color: var(--text-color, inherit); }' +
+			' .hw-table-scroll { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }' +
+			' .hw-table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 0.88em; }' +
+			' .hw-table th, .hw-table td { padding: 9px 12px; border-bottom: 1px solid var(--border-color, rgba(128, 128, 128, 0.15)); text-align: left; white-space: nowrap; line-height: 1.3; }' +
 			' .hw-table th { font-weight: 700; opacity: 0.65; text-transform: uppercase; font-size: 0.78em; letter-spacing: 0.5px; color: var(--text-color, inherit); }' +
-			' .hw-table td { color: var(--text-color, inherit); }'
+			' .hw-table td { color: var(--text-color, inherit); }' +
+			' @media (max-width: 640px) {' +
+			'   .hw-stat-row { flex-wrap: wrap; }' +
+			'   .hw-stat-label { white-space: normal; overflow: visible; text-overflow: clip; }' +
+			'   .hw-stat-value { text-align: right; }' +
+			' }' +
+			' @media (max-width: 600px) {' +
+			'   .hw-dashboard .cbi-value-field > input[type=text],' +
+			'   .hw-dashboard .cbi-value-field > select { width: 100%; box-sizing: border-box; min-width: 0; }' +
+			'   .btn, .cbi-button, button, input[type=button], input[type=submit], input[type=reset] {' +
+			'     white-space: nowrap !important; text-overflow: clip !important;' +
+			'     max-width: none !important; min-width: max-content !important; box-sizing: border-box !important; }' +
+			'   .cbi-page-actions, .right { display: flex !important; flex-wrap: wrap !important; gap: 6px !important; }' +
+			' }' +
+			' @media (max-width: 480px) {' +
+			'   .hw-card { padding: 15px; }' +
+			'   .hw-card.half { flex-basis: 100%; }' +
+			'   .hw-dial { transform: scale(0.9); }' +
+			'   .hw-kv { flex-direction: column; align-items: flex-start; gap: 2px; }' +
+			'   .hw-kv-v { text-align: left; overflow-wrap: anywhere; }' +
+			/* A label and a signed range cannot share a line at phone widths
+			 * without one of them being squeezed, so the stat rows stack the same
+			 * way the key/value rows do and both render in full. */
+			'   .hw-stat-row { flex-direction: column; align-items: flex-start; gap: 1px; }' +
+			'   .hw-stat-label { white-space: normal; }' +
+			'   .hw-stat-value { text-align: left; overflow-wrap: anywhere; }' +
+			'   .hw-dial-line { font-size: 1.05em; }' +
+			'   .hw-dial-single { font-size: 1.05em; }' +
+			' }'
 		);
 
 		container.appendChild(style);
 
-		// Metric & Imperial Conversion Utilities
+		/* Error banner. Hidden while telemetry is healthy. */
+		var errBanner = E('div', {
+			id: 'hw-err-banner',
+			class: 'hw-banner',
+			style: 'display: none;'
+		}, '');
+		container.appendChild(errBanner);
+
+		/* ---------------- Metric & Imperial conversion utilities --------- */
 		var toFahrenheit = function(c) {
 			return (c * 9.0 / 5.0) + 32.0;
 		};
@@ -93,187 +260,290 @@ return view.extend({
 		};
 
 		var fmtTemp = function(c) {
-			if (isNaN(c)) return '--';
+			if (c === null || isNaN(c)) return '--';
 			var f = toFahrenheit(c);
 			if (self.unitSystem === 'imperial') return f.toFixed(1) + ' °F';
 			if (self.unitSystem === 'dual') return c.toFixed(1) + ' °C / ' + f.toFixed(1) + ' °F';
 			return c.toFixed(1) + ' °C';
 		};
 
-		var fmtPower = function(dbm) {
-			if (isNaN(dbm) || dbm <= -35) {
-				return self.unitSystem === 'dual' ? 'Off / 0.00 µW' : (self.unitSystem === 'imperial' ? '0.00 µW' : 'Laser Inactive');
-			}
+		var fmtDbm = function(v) {
+			if (v === null || isNaN(v)) return '--';
+			return (v > 0 ? '+' : '') + v.toFixed(1) + ' dBm';
+		};
+
+		var fmtVolt = function(v) {
+			if (v === null || isNaN(v)) return '--';
+			return v.toFixed(2) + ' V';
+		};
+
+		var fmtBias = function(v) {
+			if (v === null || isNaN(v)) return '--';
+			return v.toFixed(1) + ' mA';
+		};
+
+		var fmtMicrowatts = function(dbm) {
 			var uw = toMicrowatts(dbm);
-			var uwStr = uw < 1 ? uw.toFixed(2) + ' µW' : (uw >= 1000 ? (uw / 1000.0).toFixed(2) + ' mW' : uw.toFixed(1) + ' µW');
+			if (uw >= 1000) return (uw / 1000.0).toFixed(2) + ' mW';
+			if (uw < 1) return uw.toFixed(2) + ' µW';
+			return uw.toFixed(1) + ' µW';
+		};
+
+		var fmtPower = function(dbm) {
+			if (isNaN(dbm)) return '--';
+			if (dbm <= LASER_OFF_DBM) {
+				if (self.unitSystem === 'imperial') return '0.00 µW';
+				if (self.unitSystem === 'dual') return _('Off') + ' / 0.00 µW';
+				return _('Laser Inactive');
+			}
+			var uwStr = fmtMicrowatts(dbm);
+			var dbmStr = (dbm > 0 ? '+' : '') + dbm.toFixed(2) + ' dBm';
 			if (self.unitSystem === 'imperial') return uwStr;
-			if (self.unitSystem === 'dual') return dbm.toFixed(2) + ' dBm / ' + uwStr;
-			return dbm.toFixed(2) + ' dBm';
+			if (self.unitSystem === 'dual') return dbmStr + ' / ' + uwStr;
+			return dbmStr;
 		};
 
-		// Standard Uptime Formatter (e.g. 2d 14h 50m or 8h 22m)
+		/* Dial centre text, one array entry per rendered line. */
+		var powerLines = function(dbm) {
+			if (isNaN(dbm)) return ['--'];
+			var uwStr = fmtMicrowatts(dbm);
+			var dbmStr = (dbm > 0 ? '+' : '') + dbm.toFixed(2) + ' dBm';
+			if (self.unitSystem === 'imperial') return [uwStr];
+			if (self.unitSystem === 'dual') return [dbmStr, uwStr];
+			return [dbmStr];
+		};
+
+		var tempLines = function(c) {
+			if (isNaN(c)) return ['--'];
+			if (self.unitSystem === 'imperial') return [toFahrenheit(c).toFixed(1) + ' °F'];
+			if (self.unitSystem === 'dual') return [c.toFixed(1) + ' °C', toFahrenheit(c).toFixed(1) + ' °F'];
+			return [c.toFixed(1) + ' °C'];
+		};
+
+		/* Standard uptime formatter (e.g. 2d 14h 50m or 8h 22m).
+		 * The `days?` keyword is MANDATORY inside the optional leading group,
+		 * otherwise "18:07" is misread as 1 day 8 hours 7 minutes. */
 		var formatUptime = function(upRaw) {
-			if (!upRaw || upRaw === '--') return '--';
+			if (upRaw === null || upRaw === undefined || upRaw === '' || upRaw === '--') return '--';
+			var days = 0, hours = 0, mins = 0, out = '';
 			if (typeof upRaw === 'number' || /^\d+$/.test(String(upRaw).trim())) {
-				var sec = parseInt(upRaw);
-				var days = Math.floor(sec / 86400);
-				var hours = Math.floor((sec % 86400) / 3600);
-				var mins = Math.floor((sec % 3600) / 60);
-				var out = '';
+				var sec = parseInt(upRaw, 10);
+				if (isNaN(sec) || sec < 0) return '--';
+				days = Math.floor(sec / 86400);
+				hours = Math.floor((sec % 86400) / 3600);
+				mins = Math.floor((sec % 3600) / 60);
 				if (days > 0) out += days + 'd ';
 				if (hours > 0 || days > 0) out += hours + 'h ';
 				out += mins + 'm';
 				return out || '0m';
 			}
-			var m = String(upRaw).match(/(?:(\d+)\s*(?:days?)?,?\s*)?(\d+):(\d+)(?::(\d+))?/i);
+			var m = String(upRaw).match(/(?:(\d+)\s*days?,?\s*)?(\d+):(\d+)(?::(\d+))?/i);
 			if (m) {
-				var days = parseInt(m[1]) || 0;
-				var hours = parseInt(m[2]) || 0;
-				var mins = parseInt(m[3]) || 0;
-				var out = '';
+				days = parseInt(m[1], 10) || 0;
+				hours = parseInt(m[2], 10) || 0;
+				mins = parseInt(m[3], 10) || 0;
 				if (days > 0) out += days + 'd ';
 				if (hours > 0 || days > 0) out += hours + 'h ';
 				out += mins + 'm';
 				return out || '0m';
 			}
-			return upRaw;
+			return String(upRaw);
 		};
 
-		// Diagnostic Quality & Official Standards Evaluator (ITU-T G.984 / SFF-8472 / IEEE 802.3ah)
-		var getRxQuality = function(rx) {
-			if (isNaN(rx) || rx <= -35.0) {
-				return { color: '#64748b', bg: 'rgba(100,116,139,0.18)', label: _('NO SIGNAL'), badge: _('No Signal'), severity: 'off' };
-			}
-			// ITU-T Standard Optical Link Health Grading:
-			// Optimal / Best: -13.0 to -24.0 dBm (Green)
-			// Marginal / Low Warning: -24.1 to -27.5 dBm (Yellow / Amber)
-			// High Warning: -8.0 to -12.9 dBm (Yellow / Amber)
-			// Alarm / Worst: < -27.5 dBm (Critical Low) OR > -8.0 dBm (Overload) (Red)
-			if (rx <= -27.5) {
-				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('CRITICAL LOW (ALARM)'), badge: _('Critical Low'), severity: 'alarm' };
-			}
-			if (rx < -24.0) {
-				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('MARGINAL LOW (WARN)'), badge: _('Marginal (Low)'), severity: 'warn' };
-			}
-			if (rx > -8.0) {
-				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('SIGNAL OVERLOAD (ALARM)'), badge: _('Overload Alarm'), severity: 'alarm' };
-			}
-			if (rx > -13.0) {
-				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('HIGH SIGNAL (WARN)'), badge: _('High (Warning)'), severity: 'warn' };
-			}
-			return { color: '#10b981', bg: 'rgba(16,185,129,0.15)', label: _('OPTIMAL SIGNAL (BEST)'), badge: _('Optimal'), severity: 'optimal' };
+		/* ---------------- Threshold resolution --------------------------
+		 * The backend payload is authoritative. Anything it omits falls back
+		 * to the §2 profile for the active optical class. Both the matrix
+		 * table cells and the evaluator bands read this one object, so the
+		 * table and the badge on the same row cannot contradict each other.
+		 * ---------------------------------------------------------------- */
+		/* Renders the governing standard, marked as assumed when the optic did not
+		 * state its own class. The V2802RH BOSA reports a vendor string of
+		 * "ONU_B+_G", so optical_class_source is normally "hardware" here -- but a
+		 * different optic may say nothing, and an assumed budget must not be shown
+		 * as a confirmed one. */
+		var citationLabel = function(th, res) {
+			var src = res && res.optical_class_source;
+			/* The provenance is preserved in the payload as optical_class_source
+			 * for anyone reading the JSON. The visible label carries only the
+			 * formal designation of the governing recommendation. */
+			return th.optical_citation;
 		};
 
-		var getTxQuality = function(tx) {
-			if (isNaN(tx) || tx <= -35.0) {
-				return { color: '#64748b', bg: 'rgba(100,116,139,0.18)', label: _('LASER INACTIVE'), badge: _('Inactive'), severity: 'off' };
+		var resolveThresholds = function(res) {
+			var cls = (res && typeof res.optical_class === 'string' && res.optical_class !== '')
+				? res.optical_class : uciOpticalClass;
+			if (!OPTICAL_PROFILES[cls]) cls = 'bplus';
+
+			var p = OPTICAL_PROFILES[cls];
+			var raw = (res && res.thresholds && typeof res.thresholds === 'object') ? res.thresholds : {};
+			var th = { cls: cls };
+			var v;
+
+			th.optical_citation = pickStr(raw, ['citation', 'optical_citation']) || p.citation;
+			th.sff_citation = pickStr(raw, ['sff_citation', 'diag_citation']) || SFF8472.citation;
+
+			/* Optical receive - alarm limits are the LOS assert points. */
+			v = pickNum(raw, ['rx_low_alarm', 'rx_pwr_low_alarm', 'rx_sensitivity_dbm']);
+			th.rx_low_alarm = (v !== null) ? v : p.rx_low_alarm;
+			v = pickNum(raw, ['rx_high_alarm', 'rx_pwr_high_alarm', 'rx_overload_dbm']);
+			th.rx_high_alarm = (v !== null) ? v : p.rx_high_alarm;
+			v = pickNum(raw, ['rx_low_warn', 'rx_pwr_low_warn']);
+			th.rx_low_warn = (v !== null) ? v : th.rx_low_alarm + RX_WARN_MARGIN_DB;
+			v = pickNum(raw, ['rx_high_warn', 'rx_pwr_high_warn']);
+			th.rx_high_warn = (v !== null) ? v : th.rx_high_alarm - RX_WARN_MARGIN_DB;
+
+			/* Optical transmit. */
+			v = pickNum(raw, ['tx_low_alarm', 'tx_pwr_low_alarm', 'tx_min_dbm']);
+			th.tx_low_alarm = (v !== null) ? v : p.tx_low_alarm;
+			v = pickNum(raw, ['tx_high_alarm', 'tx_pwr_high_alarm', 'tx_max_dbm']);
+			th.tx_high_alarm = (v !== null) ? v : p.tx_high_alarm;
+			v = pickNum(raw, ['tx_low_warn', 'tx_pwr_low_warn']);
+			th.tx_low_warn = (v !== null) ? v : th.tx_low_alarm + TX_WARN_MARGIN_DB;
+			v = pickNum(raw, ['tx_high_warn', 'tx_pwr_high_warn']);
+			th.tx_high_warn = (v !== null) ? v : th.tx_high_alarm - TX_WARN_MARGIN_DB;
+
+			/* Non-optical SFF-8472 diagnostics. */
+			var simple = [
+				['temp_low_alarm',   ['temp_low_alarm', 'temperature_low_alarm']],
+				['temp_low_warn',    ['temp_low_warn', 'temperature_low_warn']],
+				['temp_high_warn',   ['temp_high_warn', 'temperature_high_warn']],
+				['temp_high_alarm',  ['temp_high_alarm', 'temperature_high_alarm']],
+				['volt_low_alarm',   ['volt_low_alarm', 'voltage_low_alarm']],
+				['volt_low_warn',    ['volt_low_warn', 'voltage_low_warn']],
+				['volt_high_warn',   ['volt_high_warn', 'voltage_high_warn']],
+				['volt_high_alarm',  ['volt_high_alarm', 'voltage_high_alarm']],
+				['bias_low_alarm',   ['bias_low_alarm', 'bias_current_low_alarm']],
+				['bias_low_warn',    ['bias_low_warn', 'bias_current_low_warn']],
+				['bias_high_warn',   ['bias_high_warn', 'bias_current_high_warn']],
+				['bias_high_alarm',  ['bias_high_alarm', 'bias_current_high_alarm']]
+			];
+			for (var i = 0; i < simple.length; i++) {
+				var key = simple[i][0];
+				v = pickNum(raw, simple[i][1]);
+				th[key] = (v !== null) ? v : SFF8472[key];
 			}
-			// ITU-T Standard Optical Transmit Grading:
-			// Optimal / Best: +1.5 to +4.5 dBm (Green)
-			// Marginal: +0.5 to +1.4 dBm OR +4.6 to +5.0 dBm (Yellow)
-			// Alarm: < +0.5 dBm OR > +5.0 dBm (Red)
-			if (tx < 0.5) {
-				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('LOW TX POWER (ALARM)'), badge: _('Low Tx Alarm'), severity: 'alarm' };
-			}
-			if (tx < 1.5) {
-				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('MARGINAL TX (WARN)'), badge: _('Marginal Tx'), severity: 'warn' };
-			}
-			if (tx > 5.0) {
-				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('HIGH TX (ALARM)'), badge: _('High Tx Alarm'), severity: 'alarm' };
-			}
-			if (tx > 4.5) {
-				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('HIGH TX (WARN)'), badge: _('High Tx Warn'), severity: 'warn' };
-			}
-			return { color: '#10b981', bg: 'rgba(16,185,129,0.15)', label: _('OPTIMAL TX (BEST)'), badge: _('Optimal'), severity: 'optimal' };
+
+			v = pickNum(raw, ['wavelength_rx_nm', 'rx_wavelength_nm', 'wl_rx_nm']);
+			th.wavelength_rx_nm = (v !== null) ? v : p.wavelength_rx_nm;
+			v = pickNum(raw, ['wavelength_tx_nm', 'tx_wavelength_nm', 'wl_tx_nm']);
+			th.wavelength_tx_nm = (v !== null) ? v : p.wavelength_tx_nm;
+
+			return th;
 		};
 
-		var getTempQuality = function(temp) {
-			if (isNaN(temp)) {
-				return { color: '#64748b', bg: 'rgba(100,116,139,0.18)', label: _('UNKNOWN'), badge: _('Unknown'), severity: 'off' };
+		/* ---------------- Diagnostic quality evaluators ------------------
+		 * Bands are taken from the resolved threshold object, never from
+		 * literals, so they always match the matrix table on screen.
+		 * ---------------------------------------------------------------- */
+
+		/* Loss of Signal is asserted on BOTH sides of the receiver window:
+		 * below the BOSA sensitivity floor there is no framing, and above the
+		 * overload ceiling the photodiode is saturated. */
+		var getRxQuality = function(rx, th) {
+			if (isNaN(rx))
+				return quality('off', _('NO DATA'), _('Unknown'));
+			if (rx < th.rx_low_alarm) {
+				return quality('alarm',
+					(rx <= DARK_FIBRE_DBM) ? _('LOS - NO SIGNAL / DARK FIBRE') : _('LOS - BELOW RECEIVER SENSITIVITY'),
+					_('LOS Alarm'));
 			}
-			// Operating Temperature Grading:
-			// Optimal (Cool): < 55.0 °C (Green)
-			// Elevated (Warm): 55.0 °C to 69.9 °C (Yellow / Amber)
-			// Critical High (Alarm): >= 70.0 °C (Red)
-			// Low Warning: < 15.0 °C (Yellow)
-			// Low Alarm: <= 0.0 °C (Red)
-			if (temp >= 70.0) {
-				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('CRITICAL TEMP (ALARM)'), badge: _('High Alarm'), severity: 'alarm' };
-			}
-			if (temp >= 55.0) {
-				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('ELEVATED (WARM)'), badge: _('Warm / Elevated'), severity: 'warn' };
-			}
-			if (temp <= 0.0) {
-				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('LOW TEMP (ALARM)'), badge: _('Low Alarm'), severity: 'alarm' };
-			}
-			if (temp < 15.0) {
-				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('LOW TEMP (WARN)'), badge: _('Low Temp'), severity: 'warn' };
-			}
-			return { color: '#10b981', bg: 'rgba(16,185,129,0.15)', label: _('OPTIMAL (COOL)'), badge: _('Optimal'), severity: 'optimal' };
+			if (rx > th.rx_high_alarm)
+				return quality('alarm', _('LOS - RECEIVER OVERLOAD'), _('LOS Overload'));
+			if (rx < th.rx_low_warn)
+				return quality('warn', _('MARGINAL LOW (WARNING)'), _('Marginal (Low)'));
+			if (rx > th.rx_high_warn)
+				return quality('warn', _('HIGH SIGNAL (WARNING)'), _('High (Warning)'));
+			return quality('optimal', _('OPTIMAL SIGNAL'), _('Optimal'));
 		};
 
-		var getVoltQuality = function(volt) {
-			if (isNaN(volt)) {
-				return { color: '#64748b', bg: 'rgba(100,116,139,0.18)', label: _('UNKNOWN'), badge: _('Unknown'), severity: 'off' };
-			}
-			if (volt < 3.05 || volt > 3.55) {
-				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('VOLTAGE ALARM'), badge: _('Alarm'), severity: 'alarm' };
-			}
-			if (volt < 3.15 || volt > 3.45) {
-				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('MARGINAL VCC'), badge: _('Warning'), severity: 'warn' };
-			}
-			return { color: '#10b981', bg: 'rgba(16,185,129,0.15)', label: _('OPTIMAL (3.3V)'), badge: _('Optimal'), severity: 'optimal' };
+		var getTxQuality = function(tx, th) {
+			if (isNaN(tx))
+				return quality('off', _('NO DATA'), _('Unknown'));
+			if (tx <= LASER_OFF_DBM)
+				return quality('off', _('LASER INACTIVE'), _('Laser Inactive'));
+			if (tx < th.tx_low_alarm)
+				return quality('alarm', _('LOW TX POWER (ALARM)'), _('Low TX Alarm'));
+			if (tx > th.tx_high_alarm)
+				return quality('alarm', _('HIGH TX POWER (ALARM)'), _('High TX Alarm'));
+			if (tx < th.tx_low_warn)
+				return quality('warn', _('MARGINAL TX (WARNING)'), _('Marginal (Low)'));
+			if (tx > th.tx_high_warn)
+				return quality('warn', _('HIGH TX (WARNING)'), _('High (Warning)'));
+			return quality('optimal', _('OPTIMAL TX POWER'), _('Optimal'));
 		};
 
-		var getBiasQuality = function(bias, tx) {
-			if (isNaN(bias) || bias <= 0.0 || (tx !== undefined && tx <= -35)) {
-				return { color: '#64748b', bg: 'rgba(100,116,139,0.18)', label: _('STANDBY / OFF'), badge: _('Standby'), severity: 'off' };
-			}
-			if (bias > 45.0 || bias < 1.0) {
-				return { color: '#ef4444', bg: 'rgba(239,68,68,0.15)', label: _('BIAS ALARM'), badge: _('Alarm'), severity: 'alarm' };
-			}
-			if (bias > 25.0 || bias < 5.0) {
-				return { color: '#f59e0b', bg: 'rgba(245,158,11,0.15)', label: _('ELEVATED BIAS'), badge: _('Warning'), severity: 'warn' };
-			}
-			return { color: '#10b981', bg: 'rgba(16,185,129,0.15)', label: _('OPTIMAL BIAS'), badge: _('Optimal'), severity: 'optimal' };
+		var getTempQuality = function(temp, th) {
+			if (isNaN(temp))
+				return quality('off', _('NO DATA'), _('Unknown'));
+			if (temp <= th.temp_low_alarm)
+				return quality('alarm', _('CRITICAL LOW (ALARM)'), _('Low Alarm'));
+			if (temp >= th.temp_high_alarm)
+				return quality('alarm', _('CRITICAL HIGH (ALARM)'), _('High Alarm'));
+			if (temp < th.temp_low_warn)
+				return quality('warn', _('LOW TEMPERATURE (WARNING)'), _('Low Warning'));
+			if (temp >= th.temp_high_warn)
+				return quality('warn', _('ELEVATED (WARNING)'), _('Elevated (Warm)'));
+			return quality('optimal', _('OPTIMAL (NORMAL)'), _('Optimal'));
 		};
 
-		// Circular Dial Generator
-		var createDial = function(id, title) {
-			var radius = 70;
-			var circumference = 2 * Math.PI * radius;
+		var getVoltQuality = function(volt, th) {
+			if (isNaN(volt))
+				return quality('off', _('NO DATA'), _('Unknown'));
+			if (volt <= th.volt_low_alarm || volt >= th.volt_high_alarm)
+				return quality('alarm', _('SUPPLY VOLTAGE ALARM'), _('Alarm'));
+			if (volt < th.volt_low_warn || volt > th.volt_high_warn)
+				return quality('warn', _('MARGINAL VCC (WARNING)'), _('Warning'));
+			return quality('optimal', _('OPTIMAL VCC'), _('Optimal'));
+		};
+
+		var getBiasQuality = function(bias, tx, th) {
+			if (isNaN(bias))
+				return quality('off', _('NO DATA'), _('Unknown'));
+			/* A quiescent laser is not a fault - report it as off, not green. */
+			if (bias <= 0.0 || (!isNaN(tx) && tx <= LASER_OFF_DBM))
+				return quality('off', _('STANDBY / LASER OFF'), _('Standby'));
+			if (bias < th.bias_low_alarm || bias > th.bias_high_alarm)
+				return quality('alarm', _('LASER BIAS ALARM'), _('Alarm'));
+			if (bias < th.bias_low_warn || bias > th.bias_high_warn)
+				return quality('warn', _('LASER BIAS WARNING'), _('Warning'));
+			return quality('optimal', _('OPTIMAL BIAS'), _('Optimal'));
+		};
+
+		/* ---------------- Radial SVG dial builder ------------------------ */
+		var createDial = function(type, title) {
+			var radius = 64;
+			var circumference = 2 * Math.PI * radius; // ~402.12
 
 			var svgContainer = E('div', {
-				id: 'dial-svg-' + id,
-				style: 'position:absolute; top:0; left:0; width:160px; height:160px; background:transparent !important;'
+				style: 'position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: transparent !important;'
 			});
-			svgContainer.innerHTML = '<svg viewBox="0 0 160 160" style="background:transparent !important; width:160px; height:160px;">' +
-				'<circle class="hw-dial-bg" cx="80" cy="80" r="' + radius + '"/>' +
-				'<circle id="dial-prog-' + id + '" class="hw-dial-progress" cx="80" cy="80" r="' + radius + '" style="stroke: #00acc1; stroke-dasharray: 0 ' + circumference + ';"/>' +
+			svgContainer.innerHTML = '<svg viewBox="0 0 160 160" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform: rotate(-90deg); background: transparent !important;">' +
+				'<circle class="hw-dial-bg" cx="80" cy="80" r="' + radius + '" style="fill: none; stroke: var(--border-color, rgba(128, 128, 128, 0.2)); stroke-width: 10;"/>' +
+				'<circle id="dial-prog-' + type + '" class="hw-dial-progress" cx="80" cy="80" r="' + radius + '" style="fill: none; stroke-width: 10; stroke-linecap: round; stroke-dasharray: 0 ' + circumference.toFixed(2) + '; stroke: ' + SEVERITY.off.color + '; transition: stroke-dasharray 0.5s ease, stroke 0.5s ease;"/>' +
 				'</svg>';
 
-			var dialBox = E('div', {
-				class: 'hw-dial',
-				style: 'background:transparent !important;'
-			}, [
+			var dialBox = E('div', { class: 'hw-dial' }, [
 				svgContainer,
-				E('div', { id: 'dial-txt-' + id, class: 'hw-dial-center' }, '--')
+				E('div', { id: 'dial-txt-' + type, class: 'hw-dial-center' }, [
+					E('span', { class: 'hw-dial-single', style: 'color: ' + SEVERITY.off.color + ';' }, '--')
+				])
 			]);
 
-			var statusPill = E('div', {
-				id: 'dial-pill-' + id,
-				class: 'hw-status-pill',
-				style: 'background: rgba(128,128,128,0.15); color: var(--text-color, inherit);'
-			}, '--');
-
-			var card = E('div', {
-				class: 'hw-card',
-				id: 'card-' + id
-			}, [
-				E('h3', { id: 'title-' + id }, title),
+			var card = E('div', { class: 'hw-card' }, [
+				E('h3', {}, title),
+				E('div', { id: 'sub-' + type, class: 'hw-subtitle' }, '--'),
 				dialBox,
-				statusPill,
-				E('div', { id: 'stats-' + id, class: 'hw-stats-list' })
+				E('div', {
+					id: 'dial-pill-' + type,
+					class: 'hw-status-pill',
+					style: 'background: ' + SEVERITY.off.bg + '; color: ' + SEVERITY.off.color + ';'
+				}, _('WAITING FOR DATA')),
+				E('div', { id: 'stats-' + type, class: 'hw-stats-list' }, [
+					E('div', { class: 'hw-stat-row' }, [E('span', { class: 'hw-stat-label' }, _('Status:')), E('span', { class: 'hw-stat-value' }, '--')]),
+					E('div', { class: 'hw-stat-row' }, [E('span', { class: 'hw-stat-label' }, _('Reading:')), E('span', { class: 'hw-stat-value' }, '--')]),
+					E('div', { class: 'hw-stat-row' }, [E('span', { class: 'hw-stat-label' }, _('Target Range:')), E('span', { class: 'hw-stat-value' }, '--')]),
+					E('div', { class: 'hw-stat-row' }, [E('span', { class: 'hw-stat-label' }, _('Reference:')), E('span', { class: 'hw-stat-value' }, '--')])
+				])
 			]);
 
 			return {
@@ -282,7 +552,7 @@ return view.extend({
 			};
 		};
 
-		// 1. Top Row: 3 Primary Dials (RX, TX, Operating Temperature)
+		// 1. Top row: three primary dials (RX, TX, Operating Temperature)
 		var rxDial = createDial('rx', _('Received Optical Power (RX)'));
 		var txDial = createDial('tx', _('Transmitted Optical Power (TX)'));
 		var tempDial = createDial('temp', _('Operating Temperature'));
@@ -291,391 +561,587 @@ return view.extend({
 		container.appendChild(txDial.node);
 		container.appendChild(tempDial.node);
 
-		// 2. Middle Row: 3 Dedicated Categorized Cards
-		// Card 1: GPON & OMCI Management
-		var gponCard = E('div', { class: 'hw-card', style: 'align-items: stretch; justify-content: flex-start;' }, [
-			E('h3', {}, _('GPON & OMCI Management')),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('ONU State:')), E('span', { id: 'info-onu-state', class: 'hw-temp-badge', style: 'font-weight: 700;' }, 'O5 - OPERATIONAL')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Registration:')), E('span', { id: 'info-onu-reg', class: 'hw-kv-v' }, 'Registered (O5)')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('GPON SN:')), E('span', { id: 'info-sn', class: 'hw-kv-v', style: 'color: #10b981; font-weight: 700;' }, 'NKOT2F04917E')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Vendor ID:')), E('span', { id: 'info-vendor', class: 'hw-kv-v' }, 'VSOL')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Firmware Version:')), E('span', { id: 'info-fw', class: 'hw-kv-v' }, 'V1.2.0')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Standard Compliance:')), E('span', { class: 'hw-kv-v' }, 'ITU-T G.984 / SFF-8472')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Registration State:')), E('span', { id: 'info-reg-state', class: 'hw-kv-v', style: 'color: #10b981; font-weight: 700;' }, 'Operation State (O5)')])
+		/*
+		 * 2. Middle rows: four cards, each confined to a single subsystem.
+		 *
+		 * The categories do not overlap. OMCI management (ITU-T G.988) covers the
+		 * activation state machine and the managed-entity identity; the optical
+		 * card covers only the BOSA and the laser; the Ethernet card covers only
+		 * the host-side interface and its packet counters; and the host platform
+		 * details that belong to none of those have their own card rather than
+		 * being appended to whichever card had room. No placeholder readings -
+		 * every field starts at '--' until real telemetry arrives.
+		 */
+		var kv = function (label, id, cls) {
+			return E('div', { class: 'hw-kv' }, [
+				E('span', { class: 'hw-kv-k' }, label),
+				E('span', { id: id, class: cls || 'hw-kv-v' }, '--')
+			]);
+		};
+		var kvStatic = function (label, value) {
+			return E('div', { class: 'hw-kv' }, [
+				E('span', { class: 'hw-kv-k' }, label),
+				E('span', { class: 'hw-kv-v' }, value)
+			]);
+		};
+
+		/* ONU management and activation, per ITU-T G.984.3 and G.988. */
+		var omciCard = E('div', { class: 'hw-card', style: 'align-items: stretch; justify-content: flex-start;' }, [
+			E('h3', {}, _('OMCI Management')),
+			E('div', { id: 'sub-omci', class: 'hw-card-sub' }, _('ONU management and control, per ITU-T G.988')),
+			E('div', { class: 'hw-kv' }, [
+				E('span', { class: 'hw-kv-k' }, _('ONU State:')),
+				E('span', { id: 'info-onu-state', class: 'hw-temp-badge', style: 'font-weight: 700; background: ' + SEVERITY.off.bg + '; color: ' + SEVERITY.off.color + ';' }, '--')
+			]),
+			kv(_('Activation State:'), 'info-reg-state'),
+			kv(_('Registration:'), 'info-onu-reg'),
+			kv(_('GPON Serial Number:'), 'info-sn'),
+			kv(_('OMCI Vendor Identifier:'), 'info-vendor'),
+			kv(_('Organisationally Unique Identifier:'), 'info-oui'),
+			kv(_('Equipment Identifier:'), 'info-pclass'),
+			kv(_('Manufacturer:'), 'info-manuf'),
+			kv(_('Registration Password:'), 'info-regpw'),
+			kv(_('Equalisation Delay:'), 'info-eqd'),
+			kv(_('Upstream PLOAM:'), 'info-ploam'),
+			kv(_('Remote Defect Indication:'), 'info-rdi'),
+			kv(_('Downstream OMCI PTI (pattern / mask):'), 'info-pti'),
+			kv(_('T-CONT Allocations:'), 'info-tcont'),
+			kv(_('Upstream GEM Ports:'), 'info-gem'),
+			kv(_('Downstream GEM Assembly Threshold:'), 'info-gemthr'),
+			kvStatic(_('Management Protocol:'), _('OMCI, ITU-T G.988')),
+			kvStatic(_('Activation Procedure:'), _('ITU-T G.984.3'))
 		]);
 
-		// Card 2: Transceiver & BOSA Diagnostics
+		/* The optical transmitter and receiver assembly. Optical layer only. */
 		var bosaCard = E('div', { class: 'hw-card', style: 'align-items: stretch; justify-content: flex-start;' }, [
-			E('h3', {}, _('Transceiver & BOSA Diagnostics')),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Transceiver Model:')), E('span', { id: 'info-bosa', class: 'hw-kv-v' }, 'GN25L95')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Transceiver Class:')), E('span', { id: 'info-bosa-vendor', class: 'hw-kv-v' }, 'VSOL Class B+ BOSA')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('TX Wavelength:')), E('span', { class: 'hw-kv-v' }, '1310 nm (Single Mode)')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('RX Wavelength:')), E('span', { class: 'hw-kv-v' }, '1490 nm (Single Mode)')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Optical Interface:')), E('span', { class: 'hw-kv-v' }, 'SC-APC (Single Mode)')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Supply Voltage (VCC):')), E('span', { id: 'info-vcc', class: 'hw-kv-v' }, '3.28 V')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Laser Bias Current:')), E('span', { id: 'info-bias', class: 'hw-kv-v' }, '15.7 mA')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Hardware Revision:')), E('span', { id: 'info-hw', class: 'hw-kv-v' }, '8671x')])
+			E('h3', {}, _('BOSA Laser & Optics')),
+			E('div', { id: 'sub-bosa', class: 'hw-card-sub' }, '--'),
+			kv(_('Optic Model:'), 'info-bosa'),
+			kv(_('Optic Vendor:'), 'info-optic-vendor'),
+			kv(_('Optical Class:'), 'info-bosa-class'),
+			kv(_('Transmit Wavelength:'), 'info-wl-tx'),
+			kv(_('Receive Wavelength:'), 'info-wl-rx'),
+			kvStatic(_('Interface Connector:'), _('Single-core, single-mode (SC)')),
+			kv(_('Supply Voltage:'), 'info-vcc'),
+			kv(_('Laser Bias Current:'), 'info-bias'),
+			kv(_('Forward Error Correction:'), 'info-fec'),
+			kv(_('Optical Alarms:'), 'info-alarms')
 		]);
 
-		// Card 3: Ethernet & Network Performance
+		/* Host-side Ethernet interfaces and their packet counters. */
 		var netCard = E('div', { class: 'hw-card', style: 'align-items: stretch; justify-content: flex-start;' }, [
-			E('h3', {}, _('Ethernet & Network Performance')),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('LAN 1G (Port 1):')), E('span', { id: 'info-lan1', class: 'hw-kv-v', style: 'color: #10b981; font-weight: 700;' }, 'Up, 1000M Full (In Use)')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('LAN 2.5G (Port 0):')), E('span', { id: 'info-lan25', class: 'hw-kv-v' }, 'Up, 2.5G Full')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Management Link:')), E('span', { class: 'hw-kv-v' }, 'LAN 1G (Port 1)')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Base MAC Address:')), E('span', { id: 'info-mac', class: 'hw-kv-v' }, '00:18:93:..')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Module CPU Load:')), E('span', { id: 'info-cpu', class: 'hw-kv-v' }, '1%')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('Model Name:')), E('span', { id: 'info-model', class: 'hw-kv-v' }, 'V2802RH (XPON+1GF+2.5GE)')]),
-			E('div', { class: 'hw-kv' }, [E('span', { class: 'hw-kv-k' }, _('System Uptime:')), E('span', { id: 'info-uptime', class: 'hw-kv-v' }, '--')])
+			E('h3', {}, _('Ethernet & Packet Statistics')),
+			E('div', { id: 'sub-net', class: 'hw-card-sub' }, _('Host-side interfaces and traffic counters')),
+			kv(_('LAN 2.5G (Port 0):'), 'info-lan25'),
+			kv(_('LAN 1G (Port 1):'), 'info-lan1'),
+			kv(_('Management Link:'), 'info-mgmt'),
+			kv(_('MAC Address:'), 'info-mac'),
+			kv(_('Packets (RX / TX):'), 'info-pkts'),
+			kv(_('Bytes (RX / TX):'), 'info-bytes'),
+			kv(_('Errors (RX / TX):'), 'info-errs'),
+			kv(_('Dropped (RX / TX):'), 'info-drops')
 		]);
 
-		container.appendChild(gponCard);
+		/* Host platform details, which belong to none of the three subsystems. */
+		var sysCard = E('div', { class: 'hw-card wide', style: 'align-items: stretch; justify-content: flex-start;' }, [
+			E('h3', {}, _('System Information')),
+			E('div', { id: 'sub-sys', class: 'hw-card-sub' }, _('ONT platform and firmware')),
+			E('div', { class: 'hw-kv-grid' }, [
+				kv(_('Device Model:'), 'info-model'),
+				kv(_('Firmware Version:'), 'info-fw'),
+				kv(_('Hardware Revision:'), 'info-hw'),
+				kv(_('CPU Load:'), 'info-cpu'),
+				kv(_('System Uptime:'), 'info-uptime'),
+				kv(_('Standards Compliance:'), 'info-compliance')
+			])
+		]);
+
+		container.appendChild(omciCard);
 		container.appendChild(bosaCard);
 		container.appendChild(netCard);
+		container.appendChild(sysCard);
 
-		// 3. Third Row: Diagnostic Threshold Matrix & Alarms (Wide Card)
-		var threshCard = E('div', { class: 'hw-card wide', style: 'align-items: stretch; margin-top: 5px;' }, [
-			E('h3', {}, _('SFF-8472 Diagnostic Threshold Limits & Status')),
-			E('table', { class: 'hw-table' }, [
-				E('thead', {}, [
-					E('tr', {}, [
-						E('th', {}, _('Diagnostic Metric')),
-						E('th', {}, _('Current Reading')),
-						E('th', {}, _('Low Alarm')),
-						E('th', {}, _('Low Warning')),
-						E('th', {}, _('High Warning')),
-						E('th', {}, _('High Alarm')),
-						E('th', {}, _('Diagnostic Status'))
-					])
+		// 3. Third row: diagnostic threshold matrix. Every limit cell is
+		//    populated from the backend payload - no hardcoded numbers here.
+		var offBadge = function() {
+			return E('span', {
+				class: 'hw-temp-badge',
+				style: 'background: ' + SEVERITY.off.bg + '; color: ' + SEVERITY.off.color + '; font-weight: 700;'
+			}, _('Unknown'));
+		};
+
+		var threshTable = E('table', { class: 'hw-table' }, [
+			E('thead', {}, [
+				E('tr', {}, [
+					E('th', {}, _('Diagnostic Metric')),
+					E('th', {}, _('Current Reading')),
+					E('th', {}, _('Low Alarm')),
+					E('th', {}, _('Low Warning')),
+					E('th', {}, _('High Warning')),
+					E('th', {}, _('High Alarm')),
+					E('th', {}, _('Diagnostic Status'))
+				])
+			]),
+			E('tbody', {}, [
+				E('tr', {}, [
+					E('td', {}, E('strong', {}, _('Received Optical Power (RX)'))),
+					E('td', { id: 'th-rx-val', style: 'font-weight: 700; font-family: ui-monospace, monospace;' }, '--'),
+					E('td', { id: 'th-rx-la' }, '--'),
+					E('td', { id: 'th-rx-lw' }, '--'),
+					E('td', { id: 'th-rx-hw' }, '--'),
+					E('td', { id: 'th-rx-ha' }, '--'),
+					E('td', { id: 'th-rx-status' }, offBadge())
 				]),
-				E('tbody', {}, [
-					E('tr', {}, [
-						E('td', {}, E('strong', {}, _('Received Optical Power (RX)'))),
-						E('td', { id: 'th-rx-val', style: 'font-weight: 700; font-family: ui-monospace, monospace;' }, '-- dBm'),
-						E('td', { id: 'th-rx-la' }, '-28.0 dBm'),
-						E('td', { id: 'th-rx-lw' }, '-27.0 dBm'),
-						E('td', { id: 'th-rx-hw' }, '-9.0 dBm'),
-						E('td', { id: 'th-rx-ha' }, '-8.0 dBm'),
-						E('td', { id: 'th-rx-status' }, E('span', { class: 'hw-temp-badge', style: 'background: rgba(128,128,128,0.15); color: inherit;' }, _('Checking')))
-					]),
-					E('tr', {}, [
-						E('td', {}, E('strong', {}, _('Operating Temperature'))),
-						E('td', { id: 'th-temp-val', style: 'font-weight: 700; font-family: ui-monospace, monospace;' }, '-- °C'),
-						E('td', { id: 'th-temp-la' }, '-40.0 °C / -40.0 °F'),
-						E('td', { id: 'th-temp-lw' }, '-10.0 °C / 14.0 °F'),
-						E('td', { id: 'th-temp-hw' }, '75.0 °C / 167.0 °F'),
-						E('td', { id: 'th-temp-ha' }, '85.0 °C / 185.0 °F'),
-						E('td', { id: 'th-temp-status' }, E('span', { class: 'hw-temp-badge', style: 'background: rgba(0,172,193,0.15); color: #00acc1;' }, _('Nominal')))
-					]),
-					E('tr', {}, [
-						E('td', {}, E('strong', {}, _('Supply Voltage (VCC)'))),
-						E('td', { id: 'th-volt-val', style: 'font-weight: 700; font-family: ui-monospace, monospace;' }, '-- V'),
-						E('td', {}, '2.90 V'),
-						E('td', {}, '3.05 V'),
-						E('td', {}, '3.55 V'),
-						E('td', {}, '3.70 V'),
-						E('td', { id: 'th-volt-status' }, E('span', { class: 'hw-temp-badge', style: 'background: rgba(0,172,193,0.15); color: #00acc1;' }, _('Nominal')))
-					]),
-					E('tr', {}, [
-						E('td', {}, E('strong', {}, _('Laser Bias Current'))),
-						E('td', { id: 'th-bias-val', style: 'font-weight: 700; font-family: ui-monospace, monospace;' }, '-- mA'),
-						E('td', {}, '1.0 mA'),
-						E('td', {}, '2.0 mA'),
-						E('td', {}, '60.0 mA'),
-						E('td', {}, '70.0 mA'),
-						E('td', { id: 'th-bias-status' }, E('span', { class: 'hw-temp-badge', style: 'background: rgba(0,172,193,0.15); color: #00acc1;' }, _('Nominal')))
-					]),
-					E('tr', {}, [
-						E('td', {}, E('strong', {}, _('Transmitted Optical Power (TX)'))),
-						E('td', { id: 'th-tx-val', style: 'font-weight: 700; font-family: ui-monospace, monospace;' }, '-- dBm'),
-						E('td', {}, '0.5 dBm'),
-						E('td', {}, '1.0 dBm'),
-						E('td', {}, '4.5 dBm'),
-						E('td', {}, '5.0 dBm'),
-						E('td', { id: 'th-tx-status' }, E('span', { class: 'hw-temp-badge', style: 'background: rgba(0,172,193,0.15); color: #00acc1;' }, _('Nominal')))
-					])
+				E('tr', {}, [
+					E('td', {}, E('strong', {}, _('Transmitted Optical Power (TX)'))),
+					E('td', { id: 'th-tx-val', style: 'font-weight: 700; font-family: ui-monospace, monospace;' }, '--'),
+					E('td', { id: 'th-tx-la' }, '--'),
+					E('td', { id: 'th-tx-lw' }, '--'),
+					E('td', { id: 'th-tx-hw' }, '--'),
+					E('td', { id: 'th-tx-ha' }, '--'),
+					E('td', { id: 'th-tx-status' }, offBadge())
+				]),
+				E('tr', {}, [
+					E('td', {}, E('strong', {}, _('Operating Temperature'))),
+					E('td', { id: 'th-temp-val', style: 'font-weight: 700; font-family: ui-monospace, monospace;' }, '--'),
+					E('td', { id: 'th-temp-la' }, '--'),
+					E('td', { id: 'th-temp-lw' }, '--'),
+					E('td', { id: 'th-temp-hw' }, '--'),
+					E('td', { id: 'th-temp-ha' }, '--'),
+					E('td', { id: 'th-temp-status' }, offBadge())
+				]),
+				E('tr', {}, [
+					E('td', {}, E('strong', {}, _('Supply Voltage (VCC)'))),
+					E('td', { id: 'th-volt-val', style: 'font-weight: 700; font-family: ui-monospace, monospace;' }, '--'),
+					E('td', { id: 'th-volt-la' }, '--'),
+					E('td', { id: 'th-volt-lw' }, '--'),
+					E('td', { id: 'th-volt-hw' }, '--'),
+					E('td', { id: 'th-volt-ha' }, '--'),
+					E('td', { id: 'th-volt-status' }, offBadge())
+				]),
+				E('tr', {}, [
+					E('td', {}, E('strong', {}, _('Laser Bias Current'))),
+					E('td', { id: 'th-bias-val', style: 'font-weight: 700; font-family: ui-monospace, monospace;' }, '--'),
+					E('td', { id: 'th-bias-la' }, '--'),
+					E('td', { id: 'th-bias-lw' }, '--'),
+					E('td', { id: 'th-bias-hw' }, '--'),
+					E('td', { id: 'th-bias-ha' }, '--'),
+					E('td', { id: 'th-bias-status' }, offBadge())
 				])
 			])
 		]);
+
+		var threshCard = E('div', { class: 'hw-card wide', style: 'align-items: stretch; margin-top: 5px;' }, [
+			E('h3', {}, _('Diagnostic Threshold Limits & Status')),
+			E('div', { id: 'th-caption', class: 'hw-subtitle' }, '--'),
+			E('div', { class: 'hw-table-scroll' }, [threshTable])
+		]);
 		container.appendChild(threshCard);
 
-		// Telemetry Update Function
+		/* ---------------- Shared DOM helpers ---------------------------- */
+		var setTxt = function(id, val) {
+			var el = document.getElementById(id);
+			if (!el) return;
+			el.textContent = (val === undefined || val === null || val === '') ? '--' : String(val);
+		};
+
+		var setTxtColor = function(id, val, color) {
+			var el = document.getElementById(id);
+			if (!el) return;
+			el.textContent = (val === undefined || val === null || val === '') ? '--' : String(val);
+			el.style.color = color || '';
+		};
+
+		var renderDial = function(key, dial, q, pctVal, lines) {
+			var txt = document.getElementById('dial-txt-' + key);
+			var pill = document.getElementById('dial-pill-' + key);
+			var prog = document.getElementById('dial-prog-' + key);
+
+			if (txt) {
+				txt.innerHTML = '';
+				var cls = (lines.length > 1) ? 'hw-dial-line' : 'hw-dial-single';
+				for (var i = 0; i < lines.length; i++)
+					txt.appendChild(E('span', { class: cls, style: 'color: ' + q.color + ';' }, lines[i]));
+			}
+			if (pill) {
+				pill.textContent = q.label;
+				pill.style.color = q.color;
+				pill.style.background = q.bg;
+			}
+			if (prog) {
+				var p = isNaN(pctVal) ? 0 : Math.min(100, Math.max(0, pctVal));
+				var dash = (p / 100) * dial.circ;
+				prog.style.strokeDasharray = dash.toFixed(2) + ' ' + dial.circ.toFixed(2);
+				prog.style.stroke = q.color;
+			}
+		};
+
+		var renderStats = function(key, rows) {
+			var el = document.getElementById('stats-' + key);
+			if (!el) return;
+			el.innerHTML = '';
+			for (var i = 0; i < rows.length; i++) {
+				el.appendChild(E('div', { class: 'hw-stat-row' }, [
+					E('span', { class: 'hw-stat-label' }, rows[i][0]),
+					E('span', {
+						class: 'hw-stat-value',
+						style: 'color: ' + (rows[i][2] || 'inherit') + ';'
+					}, rows[i][1])
+				]));
+			}
+		};
+
+		/* A badge always takes its background from the quality object. Never
+		 * assign a possibly-undefined value here: the CSSOM discards it and
+		 * the previous colour would persist. */
+		var setStatusBadge = function(id, q) {
+			var el = document.getElementById(id);
+			if (!el) return;
+			var isAlarm = (q.severity === 'alarm');
+			var targetClass = 'hw-temp-badge' + (isAlarm ? ' hw-temp-crit' : '');
+			var badgeEl = el.firstElementChild;
+
+			if (!badgeEl || badgeEl.tagName !== 'SPAN') {
+				badgeEl = document.createElement('span');
+				badgeEl.className = targetClass;
+				el.replaceChildren(badgeEl);
+			} else if (badgeEl.className !== targetClass) {
+				badgeEl.className = targetClass;
+			}
+
+			if (badgeEl.textContent !== q.badge)
+				badgeEl.textContent = q.badge;
+
+			badgeEl.style.color = q.color;
+			/* The alarm animation drives its own background-color. */
+			badgeEl.style.background = isAlarm ? '' : q.bg;
+			badgeEl.style.fontWeight = '700';
+		};
+
+		var pctOf = function(v, lo, hi) {
+			if (isNaN(v) || hi === lo) return 0;
+			return Math.min(100, Math.max(0, ((v - lo) / (hi - lo)) * 100));
+		};
+
+		/* Both endpoints carry their own sign, so a range reads unambiguously as
+		 * "-27.0 to -8.0 dBm" or "+0.5 to +5.0 dBm" without the reader having to
+		 * infer the sign of the second value from the first. Exactly zero takes no
+		 * sign, matching the convention datasheets use for a 0 ~ +4 dBm window. */
+		var signed = function(v, digits) {
+			var t = Math.abs(v).toFixed(digits === undefined ? 1 : digits);
+			if (v > 0) return '+' + t;
+			if (v < 0) return '-' + t;
+			return t;
+		};
+
+		var rangeText = function(lo, hi, unit) {
+			if (lo === null || hi === null || isNaN(lo) || isNaN(hi)) return '--';
+			return signed(lo) + ' to ' + signed(hi) + ' ' + unit;
+		};
+
+		/* ---------------- Telemetry update ------------------------------ */
 		var updateDashboard = function(res) {
-			if (!res || !res.ddm) return;
+			res = res || {};
 			self.lastData = res;
 
-			// Save to localStorage for instant subsequent loads
-			if (window.localStorage) {
-				try {
-					window.localStorage.setItem('vsol_last_telemetry', JSON.stringify(res));
-				} catch(e) {}
+			var healthy = (res.success !== false) && !!res.ddm;
+			var banner = document.getElementById('hw-err-banner');
+			if (banner) {
+				if (healthy) {
+					banner.style.display = 'none';
+					banner.textContent = '';
+				} else {
+					var reason = res.error || res.message ||
+						_('the ONT returned no diagnostic data');
+					banner.textContent = _('Telemetry unavailable: ') + reason + ' ' +
+						_('All readings below are shown as unknown.');
+					banner.style.display = '';
+				}
 			}
 
-			var ddm = res.ddm;
+			/* Grey the dials while offline. A gauge still rendered in its healthy
+			 * colours reads as a live measurement even with the banner above it. */
+			container.classList.toggle('hw-offline', !healthy);
+
+			var ddm = (healthy && res.ddm) ? res.ddm : {};
 			var onu = res.onu || {};
 			var dev = res.device || {};
-			var th = res.thresholds || {};
+			var th = resolveThresholds(res);
 
-			var rx = parseFloat(ddm.rx_power_dbm);
-			var tx = parseFloat(ddm.tx_power_dbm);
-			var temp = parseFloat(ddm.temperature_c);
-			var volt = parseFloat(ddm.voltage_v);
-			var bias = parseFloat(ddm.bias_current_ma);
+			var rx = healthy ? num(ddm.rx_power_dbm) : NaN;
+			var tx = healthy ? num(ddm.tx_power_dbm) : NaN;
+			var temp = healthy ? num(ddm.temperature_c) : NaN;
+			var volt = healthy ? num(ddm.voltage_v) : NaN;
+			var bias = healthy ? num(ddm.bias_current_ma) : NaN;
 
-			// Diagnostic Quality & Official Standards Evaluator
-			var rxQ = getRxQuality(rx);
-			var txQ = getTxQuality(tx);
-			var tempQ = getTempQuality(temp);
-			var voltQ = getVoltQuality(volt);
-			var biasQ = getBiasQuality(bias, tx);
+			var rxQ = getRxQuality(rx, th);
+			var txQ = getTxQuality(tx, th);
+			var tempQ = getTempQuality(temp, th);
+			var voltQ = getVoltQuality(volt, th);
+			var biasQ = getBiasQuality(bias, tx, th);
 
-			// 1. RX Power Dial
-			var rxTxt = document.getElementById('dial-txt-rx');
-			var rxPill = document.getElementById('dial-pill-rx');
-			var rxProg = document.getElementById('dial-prog-rx');
-			var rxStats = document.getElementById('stats-rx');
+			var wlRx = isNaN(th.wavelength_rx_nm) ? '--' : th.wavelength_rx_nm + ' nm';
+			var wlTx = isNaN(th.wavelength_tx_nm) ? '--' : th.wavelength_tx_nm + ' nm';
 
-			var rxPct = Math.min(100, Math.max(0, ((rx + 40) / 32) * 100));
-			var rxDash = (rxPct / 100) * rxDial.circ;
+			// 1. RX optical power
+			setTxt('sub-rx', citationLabel(th, res));
+			renderDial('rx', rxDial, rxQ,
+				pctOf(rx, th.rx_low_alarm - 5.0, th.rx_high_alarm + 2.0),
+				powerLines(rx));
+			renderStats('rx', [
+				[_('Signal Quality:'), rxQ.badge, rxQ.color],
+				[_('Calculated Power:'), fmtPower(rx), rxQ.color],
+				[_('Optimal Range:'), rangeText(th.rx_low_warn, th.rx_high_warn, 'dBm'), SEVERITY.optimal.color],
+				[_('RX Wavelength:'), wlRx, ACCENT]
+			]);
 
-			if (rxTxt) {
-				rxTxt.innerHTML = '';
-				if (self.unitSystem === 'dual') {
-					var uwVal = toMicrowatts(rx);
-					var uwFormatted = (uwVal < 1 ? uwVal.toFixed(2) : (uwVal >= 1000 ? (uwVal/1000).toFixed(1) : uwVal.toFixed(1))) + (uwVal >= 1000 ? ' mW' : ' µW');
-					rxTxt.appendChild(E('span', { class: 'hw-dial-line', style: 'color: ' + rxQ.color + ';' }, (isNaN(rx) ? '--' : rx.toFixed(1)) + ' dBm'));
-					rxTxt.appendChild(E('span', { class: 'hw-dial-line', style: 'color: ' + rxQ.color + ';' }, uwFormatted));
-				} else if (self.unitSystem === 'imperial') {
-					var uw = toMicrowatts(rx);
-					var uwSingle = (uw < 1 ? uw.toFixed(2) : (uw >= 1000 ? (uw/1000).toFixed(2) : uw.toFixed(1))) + (uw >= 1000 ? ' mW' : ' µW');
-					rxTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + rxQ.color + ';' }, uwSingle));
-				} else {
-					rxTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + rxQ.color + ';' }, (isNaN(rx) ? '--' : rx.toFixed(1)) + ' dBm'));
-				}
-			}
+			// 2. TX optical power
+			setTxt('sub-tx', citationLabel(th, res));
+			renderDial('tx', txDial, txQ,
+				(isNaN(tx) || tx <= LASER_OFF_DBM) ? 0 : pctOf(tx, th.tx_low_alarm - 1.0, th.tx_high_alarm + 1.0),
+				(!isNaN(tx) && tx <= LASER_OFF_DBM) ? [_('Laser Off')] : powerLines(tx));
+			renderStats('tx', [
+				[_('Transmitter State:'), txQ.badge, txQ.color],
+				[_('Calculated Power:'), fmtPower(tx), txQ.color],
+				[_('Target TX Range:'), rangeText(th.tx_low_warn, th.tx_high_warn, 'dBm'), SEVERITY.optimal.color],
+				[_('TX Wavelength:'), wlTx, ACCENT]
+			]);
 
-			if (rxPill) {
-				rxPill.textContent = rxQ.label;
-				rxPill.style.color = rxQ.color;
-				rxPill.style.background = rxQ.bg;
-			}
+			// 3. Operating temperature
+			setTxt('sub-temp', th.sff_citation);
+			renderDial('temp', tempDial, tempQ,
+				pctOf(temp, 0.0, th.temp_high_alarm),
+				tempLines(temp));
+			renderStats('temp', [
+				[_('Thermal Status:'), tempQ.badge, tempQ.color],
+				[_('Temperature:'), fmtTemp(temp), tempQ.color],
+				/* Informational only, deliberately not used for grading. The reading
+				 * above is the transceiver internal temperature reported over DDM,
+				 * which normally sits above ambient; the V2802RH datasheet figure is
+				 * the unit's ambient operating rating. Grading an internal reading
+				 * against an ambient rating would raise alarms that mean nothing, so
+				 * the bands stay on SFF-8472, the standard written for DDM. */
+				[_('Rated Ambient Range:'), _('−10 °C to +55 °C'), ACCENT],
+				[_('Supply Voltage (VCC):'), fmtVolt(volt), voltQ.color],
+				[_('Laser Bias Current:'), fmtBias(bias), biasQ.color]
+			]);
 
-			if (rxProg) {
-				rxProg.style.strokeDasharray = rxDash + ' ' + rxDial.circ;
-				rxProg.style.stroke = rxQ.color;
-			}
+			// 4. Card 1: GPON & OMCI management
+			var stateRaw = (onu.state !== undefined && onu.state !== null && onu.state !== '')
+				? String(onu.state).toUpperCase()
+				: (typeof onu.state_raw === 'string' ? onu.state_raw.toUpperCase() : '');
+			var isO5 = (stateRaw.indexOf('O5') !== -1);
+			var haveState = healthy && stateRaw !== '';
+			var stateQ = !haveState ? quality('off', _('UNKNOWN'), _('Unknown'))
+				: (isO5 ? quality('optimal', _('O5 - OPERATIONAL'), _('O5 - Operational'))
+					: quality('warn', _('NOT OPERATIONAL'), stateRaw));
 
-			if (rxStats) {
-				rxStats.innerHTML = '';
-				rxStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('Signal Quality:')),
-					E('span', { class: 'hw-stat-value', style: 'color: ' + rxQ.color + '; font-weight: 700;' }, rxQ.badge)
-				]));
-				rxStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('Calculated Power:')),
-					E('span', { class: 'hw-stat-value', style: 'color: ' + rxQ.color + ';' }, fmtPower(rx))
-				]));
-				rxStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('Optimal Range:')),
-					E('span', { class: 'hw-stat-value', style: 'color: #10b981;' }, '-13.0 to -24.0 dBm')
-				]));
-				rxStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('RX Wavelength:')),
-					E('span', { class: 'hw-stat-value' }, '1490 nm')
-				]));
-			}
-
-			// 2. TX Power Dial (Pie / Circular Bar)
-			var txTxt = document.getElementById('dial-txt-tx');
-			var txPill = document.getElementById('dial-pill-tx');
-			var txProg = document.getElementById('dial-prog-tx');
-			var txStats = document.getElementById('stats-tx');
-
-			var txPct = (tx <= -35) ? 0 : Math.min(100, Math.max(5, ((tx + 1.0) / 6.0) * 100));
-			var txDash = (txPct / 100) * txDial.circ;
-
-			if (txTxt) {
-				txTxt.innerHTML = '';
-				if (tx <= -35) {
-					txTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: #64748b; font-size: 1.05em;' }, _('Laser Off')));
-				} else if (self.unitSystem === 'dual') {
-					var uwTx = toMicrowatts(tx);
-					var uwTxFormatted = (uwTx < 1000 ? uwTx.toFixed(1) + ' µW' : (uwTx/1000).toFixed(2) + ' mW');
-					txTxt.appendChild(E('span', { class: 'hw-dial-line', style: 'color: ' + txQ.color + ';' }, (tx >= 0 ? '+' : '') + tx.toFixed(2) + ' dBm'));
-					txTxt.appendChild(E('span', { class: 'hw-dial-line', style: 'color: ' + txQ.color + ';' }, uwTxFormatted));
-				} else if (self.unitSystem === 'imperial') {
-					var uwTxImp = toMicrowatts(tx);
-					var uwTxSingle = (uwTxImp < 1000 ? uwTxImp.toFixed(1) + ' µW' : (uwTxImp/1000).toFixed(2) + ' mW');
-					txTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + txQ.color + ';' }, uwTxSingle));
-				} else {
-					txTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + txQ.color + ';' }, (tx >= 0 ? '+' : '') + tx.toFixed(2) + ' dBm'));
-				}
-			}
-
-			if (txPill) {
-				txPill.textContent = txQ.label;
-				txPill.style.color = txQ.color;
-				txPill.style.background = txQ.bg;
-			}
-
-			if (txProg) {
-				txProg.style.strokeDasharray = txDash + ' ' + txDial.circ;
-				txProg.style.stroke = txQ.color;
-			}
-
-			if (txStats) {
-				txStats.innerHTML = '';
-				txStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('Transmitter State:')),
-					E('span', { class: 'hw-stat-value', style: 'color: ' + txQ.color + '; font-weight: 700;' }, txQ.badge)
-				]));
-				txStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('Calculated Power:')),
-					E('span', { class: 'hw-stat-value', style: 'color: ' + txQ.color + ';' }, (tx <= -35 ? 'Laser Inactive' : fmtPower(tx)))
-				]));
-				txStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('Target TX Range:')),
-					E('span', { class: 'hw-stat-value', style: 'color: #10b981;' }, '+1.5 to +4.5 dBm')
-				]));
-				txStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('TX Wavelength:')),
-					E('span', { class: 'hw-stat-value' }, '1310 nm')
-				]));
-			}
-
-			// 3. Temperature Dial
-			var tempTxt = document.getElementById('dial-txt-temp');
-			var tempPill = document.getElementById('dial-pill-temp');
-			var tempProg = document.getElementById('dial-prog-temp');
-			var tempStats = document.getElementById('stats-temp');
-
-			var tempPct = Math.min(100, Math.max(0, (temp / 85.0) * 100));
-			var tempDash = (tempPct / 100) * tempDial.circ;
-
-			if (tempTxt) {
-				tempTxt.innerHTML = '';
-				if (self.unitSystem === 'dual') {
-					var cVal = isNaN(temp) ? '--' : temp.toFixed(1);
-					var fVal = isNaN(temp) ? '--' : toFahrenheit(temp).toFixed(1);
-					tempTxt.appendChild(E('span', { class: 'hw-dial-line', style: 'color: ' + tempQ.color + ';' }, cVal + ' °C'));
-					tempTxt.appendChild(E('span', { class: 'hw-dial-line', style: 'color: ' + tempQ.color + ';' }, fVal + ' °F'));
-				} else if (self.unitSystem === 'imperial') {
-					var fSingle = (isNaN(temp) ? '--' : toFahrenheit(temp).toFixed(1)) + ' °F';
-					tempTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + tempQ.color + ';' }, fSingle));
-				} else {
-					var cSingle = (isNaN(temp) ? '--' : temp.toFixed(1)) + ' °C';
-					tempTxt.appendChild(E('span', { class: 'hw-dial-single', style: 'color: ' + tempQ.color + ';' }, cSingle));
-				}
-			}
-
-			if (tempPill) {
-				tempPill.textContent = tempQ.label;
-				tempPill.style.color = tempQ.color;
-				tempPill.style.background = tempQ.bg;
-			}
-
-			if (tempProg) {
-				tempProg.style.strokeDasharray = tempDash + ' ' + tempDial.circ;
-				tempProg.style.stroke = tempQ.color;
-			}
-
-			if (tempStats) {
-				tempStats.innerHTML = '';
-				tempStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('Thermal Status:')),
-					E('span', { class: 'hw-stat-value', style: 'color: ' + tempQ.color + '; font-weight: 700;' }, tempQ.badge)
-				]));
-				tempStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('Temperature (Dual):')),
-					E('span', { class: 'hw-stat-value', style: 'color: ' + tempQ.color + ';' }, fmtTemp(temp))
-				]));
-				tempStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('Supply Voltage (VCC):')),
-					E('span', { class: 'hw-stat-value', style: 'color: ' + voltQ.color + ';' }, volt.toFixed(2) + ' V')
-				]));
-				tempStats.appendChild(E('div', { class: 'hw-stat-row' }, [
-					E('span', { class: 'hw-stat-label' }, _('Laser Bias Current:')),
-					E('span', { class: 'hw-stat-value', style: 'color: ' + biasQ.color + ';' }, bias.toFixed(1) + ' mA')
-				]));
-			}
-
-			// 4. Update Categorized Cards
-			var setTxt = function(id, val) {
-				var el = document.getElementById(id);
-				if (el && val !== undefined && val !== null && val !== '') el.textContent = val;
-			};
-
-			// Card 1: GPON & OMCI
-			var onuStateStr = onu.state ? String(onu.state).toUpperCase() : (onu.state_raw && onu.state_raw.indexOf('O5') !== -1 ? 'O5' : 'O1');
-			var onuColor = (onuStateStr === 'O5' || (onu.state_raw && onu.state_raw.indexOf('O5') !== -1)) ? '#10b981' : '#64748b';
-			var onuPillBg = (onuColor === '#10b981') ? 'rgba(16,185,129,0.15)' : 'rgba(100,116,139,0.18)';
 			var onuStateEl = document.getElementById('info-onu-state');
 			if (onuStateEl) {
-				onuStateEl.textContent = (onuColor === '#10b981') ? _('O5 - OPERATIONAL') : _('O1 - STANDBY');
-				onuStateEl.style.color = onuColor;
-				onuStateEl.style.background = onuPillBg;
+				onuStateEl.textContent = haveState ? (isO5 ? _('O5 - OPERATIONAL') : stateRaw) : '--';
+				onuStateEl.style.color = stateQ.color;
+				onuStateEl.style.background = stateQ.bg;
 			}
-			setTxt('info-onu-reg', onu.registered_status || (onuColor === '#10b981' ? 'Registered (O5)' : 'Standby'));
-			setTxt('info-sn', (onu.serial_number || dev.gpon_sn || 'NKOT2F04917E'));
-			setTxt('info-vendor', dev.vendor || 'VSOL');
-			setTxt('info-fw', dev.firmware || 'V1.2.0');
-			setTxt('info-reg-state', onu.state_raw || 'Operation State (O5)');
 
-			// Card 2: Transceiver & BOSA Diagnostics
-			setTxt('info-bosa', ddm.part_number || 'GN25L95');
-			setTxt('info-bosa-vendor', ddm.vendor_name || 'VSOL Class B+ BOSA');
-			setTxt('info-vcc', isNaN(volt) ? '-- V' : volt.toFixed(2) + ' V');
-			setTxt('info-bias', isNaN(bias) ? '-- mA' : bias.toFixed(1) + ' mA');
-			setTxt('info-hw', dev.hardware || '8671x');
+			setTxtColor('info-onu-reg',
+				haveState ? (onu.registered_status || (isO5 ? _('Registered (O5)') : _('Not registered'))) : null,
+				haveState ? stateQ.color : SEVERITY.off.color);
+			setTxtColor('info-sn', onu.serial_number || dev.gpon_sn,
+				(onu.serial_number || dev.gpon_sn) ? ACCENT : SEVERITY.off.color);
 
-			// Card 3: Ethernet & Network Performance
-			setTxt('info-lan1', (dev.lan1g ? dev.lan1g + ' (In Use)' : 'Up, 1000M Full (In Use)'));
-			setTxt('info-lan25', (dev.lan25g ? dev.lan25g : 'Up, 2.5G Full'));
-			setTxt('info-mac', dev.mac);
-			setTxt('info-cpu', dev.cpu_usage || '1%');
-			setTxt('info-model', dev.model || 'V2802RH (XPON+1GF+2.5GE)');
+			/* FEC comes from the device, it is never assumed to be enabled. */
+			var fec = ddm.fec_status || onu.fec_status || dev.fec_status;
+			setTxtColor('info-fec', fec, fec ? ACCENT : SEVERITY.off.color);
+
+			var alarmQ, alarmTxt;
+			if (!healthy) {
+				alarmQ = quality('off', _('UNKNOWN'), _('Unknown'));
+				alarmTxt = null;
+			} else if (rxQ.severity === 'alarm') {
+				alarmQ = rxQ;
+				alarmTxt = rxQ.label;
+			} else if (typeof onu.alarm_los === 'string' && (onu.alarm_los.indexOf('Alarm') !== -1 || onu.alarm_los.indexOf('Active') !== -1)) {
+				alarmQ = quality('alarm', _('LOS'), _('LOS Alarm'));
+				alarmTxt = _('Loss of Signal (LOS)');
+			} else if (typeof onu.alarm_sf === 'string' && onu.alarm_sf.indexOf('Fail') !== -1) {
+				alarmQ = quality('alarm', _('SF'), _('Signal Fail'));
+				alarmTxt = _('Signal Fail (SF)');
+			} else if (typeof onu.alarm_sd === 'string' && onu.alarm_sd.indexOf('Degrade') !== -1) {
+				alarmQ = quality('warn', _('SD'), _('Signal Degrade'));
+				alarmTxt = _('Signal Degrade (SD)');
+			} else if (haveState && !isO5) {
+				alarmQ = quality('warn', _('LOF'), _('Synchronising'));
+				alarmTxt = _('LOF: synchronising') + ' (' + stateRaw + ')';
+			} else if (haveState) {
+				alarmQ = quality('optimal', _('CLEAR'), _('Clear'));
+				alarmTxt = _('LOS/LOF/SF: clear');
+			} else {
+				alarmQ = quality('off', _('UNKNOWN'), _('Unknown'));
+				alarmTxt = null;
+			}
+			setTxtColor('info-alarms', alarmTxt, alarmQ.color);
+
+			setTxt('info-compliance', th.optical_citation + ' / ' + th.sff_citation);
+			setTxt('info-vendor', dev.vendor || ddm.vendor_name);
+
+			/* OMCI and PLOAM layer attributes. The ONT exposes no managed-entity
+			 * pages, so these are the whole of what it reports about management;
+			 * the equalisation delay in particular has always been in the payload
+			 * but was never rendered. */
+			setTxt('info-oui', onu.oui);
+			setTxt('info-pclass', onu.product_class);
+			setTxt('info-manuf', onu.manufacturer);
+			setTxt('info-regpw', onu.registration_password);
+			setTxt('info-ploam', onu.ploam_upstream);
+			setTxt('info-rdi', onu.rdi_state);
+			setTxt('info-pti', onu.omci_pti);
+
+			/* Transmission containers and GEM ports, both OMCI managed entities.
+			 * The counts are shown alongside the identifiers so an empty list
+			 * reads as "none allocated" rather than as a failed read. */
+			setTxt('info-tcont', onu.tcont_allocations
+				? onu.tcont_allocations + ' (' + onu.tcont_count + ')'
+				: (onu.tcont_count === 0 ? _('None allocated') : null));
+			setTxt('info-gem', onu.gem_ports
+				? onu.gem_ports + ' (' + onu.gem_port_count + ')'
+				: (onu.gem_port_count === 0 ? _('None allocated') : null));
+			setTxt('info-gemthr', (onu.ds_gem_assembly_threshold === null ||
+				onu.ds_gem_assembly_threshold === undefined)
+				? null : String(onu.ds_gem_assembly_threshold));
+			setTxt('info-eqd', (ddm.eqd_offset === null || ddm.eqd_offset === undefined)
+				? null : String(ddm.eqd_offset));
+			setTxtColor('info-reg-state',
+				haveState ? (isO5 ? _('Operation state (O5)') : _('State') + ' ' + stateRaw) : null,
+				haveState ? stateQ.color : SEVERITY.off.color);
+
+			// 5. Card 2: transceiver & BOSA diagnostics
+			setTxt('info-bosa', ddm.part_number);
+			setTxt('info-bosa-class', th.optical_citation);
+			setTxt('info-wl-tx', wlTx);
+			setTxt('info-wl-rx', wlRx);
+			setTxtColor('info-vcc', fmtVolt(volt), voltQ.color);
+			setTxtColor('info-bias', fmtBias(bias), biasQ.color);
+			setTxt('info-hw', dev.hardware);
+
+			// 6. Card 3: Ethernet & network performance
+			var lan25 = dev.lan25g || dev.port0_stat;
+			var lan1 = dev.lan1g || dev.port1_stat;
+			setTxtColor('info-lan25', lan25,
+				lan25 ? ((lan25.indexOf('Up') !== -1) ? SEVERITY.optimal.color : SEVERITY.off.color) : SEVERITY.off.color);
+			setTxtColor('info-lan1', lan1,
+				lan1 ? ((lan1.indexOf('Up') !== -1) ? SEVERITY.optimal.color : SEVERITY.off.color) : SEVERITY.off.color);
+
+			var mgmt = null;
+			if (lan25 && lan25.indexOf('Up') !== -1) mgmt = _('LAN 2.5G (Port 0)');
+			else if (lan1 && lan1.indexOf('Up') !== -1) mgmt = _('LAN 1G (Port 1)');
+			setTxt('info-mgmt', mgmt);
+
+			var mac = dev.mac || dev.mac_address;
+			if (typeof mac === 'string' && mac.indexOf(':') === -1 && mac.length === 12)
+				mac = mac.match(/.{1,2}/g).join(':').toUpperCase();
+			setTxt('info-mac', mac);
+			setTxt('info-cpu', dev.cpu_usage);
+			setTxt('info-model', dev.model);
+			setTxt('info-fw', dev.firmware);
 			setTxt('info-uptime', formatUptime(dev.uptime));
 
-			// 5. Threshold Matrix Table
-			var setTableVal = function(id, val, color) {
-				var el = document.getElementById(id);
-				if (el) {
-					el.textContent = val;
-					if (color) el.style.color = color;
-				}
+			/* Card subtitles. */
+			setTxt('sub-bosa', th.optical_citation + ' / ' + th.sff_citation);
+
+			/* The optic's own vendor string, as reported. Distinct from the OMCI
+			 * vendor identifier, which is a management attribute rather than a
+			 * property of the fitted transceiver. */
+			setTxt('info-optic-vendor', ddm.vendor_name);
+
+			/*
+			 * Ethernet packet counters. The helper has always emitted these eight
+			 * values; nothing rendered them until the Ethernet card was given sole
+			 * responsibility for host-side traffic.
+			 */
+			/* Named distinctly from the module-level num(): declaring another `num`
+			 * here would hoist a local binding across the whole of this function and
+			 * shadow the shared helper, leaving the earlier reads of rx/tx/temp/volt
+			 * and bias calling an undefined value. Counters also want null for
+			 * "absent" rather than the NaN the shared helper returns. */
+			var counterNum = function (v) {
+				if (v === null || v === undefined || v === '') return null;
+				var n = Number(v);
+				return isFinite(n) ? n : null;
+			};
+			var pair = function (a, b) {
+				var x = counterNum(a), y = counterNum(b);
+				if (x === null && y === null) return null;
+				return (x === null ? '--' : x.toLocaleString()) + ' / ' +
+				       (y === null ? '--' : y.toLocaleString());
+			};
+			var bytesPair = function (a, b) {
+				var fmt = function (v) {
+					var n = counterNum(v);
+					if (n === null) return '--';
+					var u = ['B', 'kB', 'MB', 'GB', 'TB'], i = 0;
+					while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+					return (i === 0 ? n : n.toFixed(1)) + ' ' + u[i];
+				};
+				if (counterNum(a) === null && counterNum(b) === null) return null;
+				return fmt(a) + ' / ' + fmt(b);
 			};
 
-			setTableVal('th-rx-val', fmtPower(rx), rxQ.color);
-			setTableVal('th-temp-val', fmtTemp(temp), tempQ.color);
-			setTableVal('th-volt-val', isNaN(volt) ? '-- V' : volt.toFixed(2) + ' V', voltQ.color);
-			setTableVal('th-bias-val', isNaN(bias) ? '-- mA' : bias.toFixed(1) + ' mA', biasQ.color);
-			setTableVal('th-tx-val', (tx <= -35 ? 'Laser Inactive' : fmtPower(tx)), txQ.color);
+			setTxt('info-pkts',  pair(dev.rx_packets, dev.tx_packets));
+			setTxt('info-bytes', bytesPair(dev.rx_bytes, dev.tx_bytes));
 
-			// Threshold table headers / unit labels
-			if (self.unitSystem === 'imperial') {
-				setTxt('th-temp-la', '-40.0 °F');
-				setTxt('th-temp-lw', '14.0 °F');
-				setTxt('th-temp-hw', '167.0 °F');
-				setTxt('th-temp-ha', '185.0 °F');
-			} else if (self.unitSystem === 'dual') {
-				setTxt('th-temp-la', '-40.0 °C / -40.0 °F');
-				setTxt('th-temp-lw', '-10.0 °C / 14.0 °F');
-				setTxt('th-temp-hw', '75.0 °C / 167.0 °F');
-				setTxt('th-temp-ha', '85.0 °C / 185.0 °F');
-			} else {
-				setTxt('th-temp-la', '-40.0 °C');
-				setTxt('th-temp-lw', '-10.0 °C');
-				setTxt('th-temp-hw', '75.0 °C');
-				setTxt('th-temp-ha', '85.0 °C');
-			}
+			var errTxt = pair(dev.rx_errors, dev.tx_errors);
+			var drpTxt = pair(dev.rx_dropped, dev.tx_dropped);
+			setTxt('info-errs', errTxt);
+			setTxt('info-drops', drpTxt);
 
-			var setStatusBadge = function(id, q) {
+			/* Any non-zero error or drop count is worth the operator's attention,
+			 * so it is coloured as a warning rather than left to be read as normal. */
+			var mark = function (id, a, b) {
 				var el = document.getElementById(id);
-				if (el) {
-					var critClass = (q.severity === 'alarm') ? ' hw-temp-crit' : '';
-					el.innerHTML = '<span class="hw-temp-badge' + critClass + '" style="background: ' + q.bg + '; color: ' + q.color + '; font-weight: 700;">' + q.badge + '</span>';
-				}
+				if (!el) return;
+				var x = counterNum(a), y = counterNum(b);
+				var bad = (x !== null && x > 0) || (y !== null && y > 0);
+				el.style.color = (x === null && y === null) ? ''
+					: (bad ? SEVERITY.warn.color : SEVERITY.optimal.color);
 			};
+			mark('info-errs', dev.rx_errors, dev.tx_errors);
+			mark('info-drops', dev.rx_dropped, dev.tx_dropped);
+
+			// 7. Threshold matrix. Cells and badges share one payload, so the
+			//    advertised band and the badge on the row cannot disagree.
+			setTxt('th-caption',
+				_('Optical limits per') + ' ' + th.optical_citation + '. ' +
+				_('Transceiver diagnostics per') + ' ' + th.sff_citation + '.');
+
+			setTxtColor('th-rx-val', fmtPower(rx), rxQ.color);
+			setTxt('th-rx-la', fmtDbm(th.rx_low_alarm));
+			setTxt('th-rx-lw', fmtDbm(th.rx_low_warn));
+			setTxt('th-rx-hw', fmtDbm(th.rx_high_warn));
+			setTxt('th-rx-ha', fmtDbm(th.rx_high_alarm));
+
+			setTxtColor('th-temp-val', fmtTemp(temp), tempQ.color);
+			setTxt('th-temp-la', fmtTemp(th.temp_low_alarm));
+			setTxt('th-temp-lw', fmtTemp(th.temp_low_warn));
+			setTxt('th-temp-hw', fmtTemp(th.temp_high_warn));
+			setTxt('th-temp-ha', fmtTemp(th.temp_high_alarm));
+
+			setTxtColor('th-volt-val', fmtVolt(volt), voltQ.color);
+			setTxt('th-volt-la', fmtVolt(th.volt_low_alarm));
+			setTxt('th-volt-lw', fmtVolt(th.volt_low_warn));
+			setTxt('th-volt-hw', fmtVolt(th.volt_high_warn));
+			setTxt('th-volt-ha', fmtVolt(th.volt_high_alarm));
+
+			setTxtColor('th-bias-val', fmtBias(bias), biasQ.color);
+			setTxt('th-bias-la', fmtBias(th.bias_low_alarm));
+			setTxt('th-bias-lw', fmtBias(th.bias_low_warn));
+			setTxt('th-bias-hw', fmtBias(th.bias_high_warn));
+			setTxt('th-bias-ha', fmtBias(th.bias_high_alarm));
+
+			setTxtColor('th-tx-val', fmtPower(tx), txQ.color);
+			setTxt('th-tx-la', fmtDbm(th.tx_low_alarm));
+			setTxt('th-tx-lw', fmtDbm(th.tx_low_warn));
+			setTxt('th-tx-hw', fmtDbm(th.tx_high_warn));
+			setTxt('th-tx-ha', fmtDbm(th.tx_high_alarm));
 
 			setStatusBadge('th-rx-status', rxQ);
 			setStatusBadge('th-temp-status', tempQ);
@@ -684,13 +1150,19 @@ return view.extend({
 			setStatusBadge('th-tx-status', txQ);
 		};
 
-		// Initial render populate
+		/* Initial populate from the data resolved by load(). */
 		updateDashboard(initialStatus);
 
-		// Standard LuCI Native Polling System
+		/* Standard LuCI polling. A rejected call is surfaced as an error
+		 * banner, never left on screen as stale telemetry. */
 		poll.add(function() {
 			return callGetStatus().then(function(res) {
 				updateDashboard(res);
+			}, function(err) {
+				updateDashboard({
+					success: false,
+					error: (err && err.message) ? err.message : String(err)
+				});
 			});
 		}, pollInterval);
 

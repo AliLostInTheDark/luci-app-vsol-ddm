@@ -1,49 +1,61 @@
-#!/bin/bash
-# Deploy luci-app-vsol-ddm to live OpenWrt router over SSH
+#!/bin/sh
+# Deploy luci-app-vsol-ddm to live OpenWrt router using APK ADD ONLY
+# Usage: ./deploy.sh [ROUTER_IP] (default: 172.16.1.1)
 set -e
 
-ROUTER_IP="${1:-10.10.10.1}"
-echo "==> Deploying luci-app-vsol-ddm to ${ROUTER_IP}..."
+ROUTER_IP="${1:-172.16.1.1}"
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+HOST_APK="/home/ali/openwrt-jidu6j11/staging_dir/host/bin/apk"
 
-TMP_DIR=$(mktemp -d)
-TAR_FILE=$(mktemp /tmp/vsol_payload.XXXXXX.tar.gz)
-trap 'rm -rf "$TMP_DIR" "$TAR_FILE"' EXIT
+echo "==> Deploying luci-app-vsol-ddm to OpenWrt router at $ROUTER_IP via APK package manager..."
 
-# Copy tree
-mkdir -p "$TMP_DIR/www/luci-static/resources/view/vsol_ddm"
-mkdir -p "$TMP_DIR/etc/config"
-mkdir -p "$TMP_DIR/etc/uci-defaults"
-mkdir -p "$TMP_DIR/usr/libexec/rpcd"
-mkdir -p "$TMP_DIR/usr/bin"
-mkdir -p "$TMP_DIR/usr/share/luci/menu.d"
-mkdir -p "$TMP_DIR/usr/share/rpcd/acl.d"
+# No compiled component, so there is nothing to detect: one package serves
+# every architecture.
+TARGET_ARCH="noarch"
+echo "==> Building architecture-independent package"
 
-cp -r htdocs/luci-static/resources/view/vsol_ddm/* "$TMP_DIR/www/luci-static/resources/view/vsol_ddm/"
-cp -r root/etc/config/* "$TMP_DIR/etc/config/"
-cp -r root/etc/uci-defaults/* "$TMP_DIR/etc/uci-defaults/"
-cp -r root/usr/libexec/rpcd/* "$TMP_DIR/usr/libexec/rpcd/"
-cp -r root/usr/share/luci/menu.d/* "$TMP_DIR/usr/share/luci/menu.d/"
-cp -r root/usr/share/rpcd/acl.d/* "$TMP_DIR/usr/share/rpcd/acl.d/"
+TMP_DIR="/tmp/apk_build_vsol_${TARGET_ARCH}"
+rm -rf "$TMP_DIR"
+mkdir -p "$TMP_DIR/www/luci-static/resources/view/vsol_ddm" \
+         "$TMP_DIR/usr/share/vsol_ddm" \
+         "$TMP_DIR/usr/libexec/rpcd" \
+         "$TMP_DIR/usr/share/luci/menu.d" \
+         "$TMP_DIR/usr/share/rpcd/acl.d" \
+         "$TMP_DIR/etc/config" \
+         "$TMP_DIR/etc/uci-defaults" \
+         "$TMP_DIR/lib/upgrade/keep.d"
 
-# Check for cross-compiled target binary first
-BUILD_BIN="/home/ali/openwrt-jidu6j11/build_dir/target-aarch64_cortex-a53_musl/luci-app-vsol-ddm/vsol_query"
-if [ -f "$BUILD_BIN" ]; then
-	cp "$BUILD_BIN" "$TMP_DIR/usr/bin/vsol_query"
-elif [ -f "src/vsol_query" ]; then
-	cp "src/vsol_query" "$TMP_DIR/usr/bin/vsol_query"
-fi
 
-tar -C "$TMP_DIR" -czf "$TAR_FILE" .
-ssh root@"$ROUTER_IP" "tar -xzf - -C /" < "$TAR_FILE"
+cp -r "$SCRIPT_DIR/htdocs/luci-static/resources/view/vsol_ddm/"* "$TMP_DIR/www/luci-static/resources/view/vsol_ddm/" 2>/dev/null || true
+cp -r "$SCRIPT_DIR/root/etc/config/"* "$TMP_DIR/etc/config/" 2>/dev/null || true
+cp -r "$SCRIPT_DIR/root/etc/uci-defaults/"* "$TMP_DIR/etc/uci-defaults/" 2>/dev/null || true
+cp -r "$SCRIPT_DIR/root/usr/libexec/rpcd/"* "$TMP_DIR/usr/libexec/rpcd/" 2>/dev/null || true
+cp -r "$SCRIPT_DIR/root/usr/share/luci/menu.d/"* "$TMP_DIR/usr/share/luci/menu.d/" 2>/dev/null || true
+cp -r "$SCRIPT_DIR/root/usr/share/rpcd/acl.d/"* "$TMP_DIR/usr/share/rpcd/acl.d/" 2>/dev/null || true
+# Sysupgrade retention list. Unconditional: if this is missing the package still
+# installs, but /etc/config survives a reflash only by base-files' default list.
+cp "$SCRIPT_DIR/root/lib/upgrade/keep.d/luci-app-vsol-ddm" "$TMP_DIR/lib/upgrade/keep.d/luci-app-vsol-ddm"
+cp "$SCRIPT_DIR/root/usr/share/vsol_ddm/parse.awk" "$TMP_DIR/usr/share/vsol_ddm/parse.awk"
 
-echo "==> Setting permissions and clearing all caches on ${ROUTER_IP}..."
-ssh root@"$ROUTER_IP" "
-	chmod 0755 /usr/libexec/rpcd/vsol_ddm /etc/uci-defaults/80_luci-app-vsol-ddm 2>/dev/null || true
-	[ -f /usr/bin/vsol_query ] && chmod 0755 /usr/bin/vsol_query 2>/dev/null || true
-	rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache* /tmp/vsol_ddm_cache.json /tmp/luci-sessions/*
-	/etc/init.d/rpcd reload
-	/etc/init.d/rpcd restart
-	/etc/init.d/uhttpd restart
-"
+chmod -R u=rwX,go=rX "$TMP_DIR"
+chmod 0755 "$TMP_DIR/usr/libexec/rpcd/"* "$TMP_DIR/etc/uci-defaults/"* 2>/dev/null || true
 
-echo "==> Done! Successfully cleared caches and restarted web daemon on http://${ROUTER_IP}/cgi-bin/luci/admin/status/vsol_ddm"
+APK_FILE="/tmp/luci-app-vsol-ddm-1.0.0-r1_noarch.apk"
+"$HOST_APK" mkpkg \
+    --info "name:luci-app-vsol-ddm" \
+    --info "version:1.0.0-r1" \
+    --info "arch:noarch" \
+    --info "description:LuCI support for VSOL V2802RH Optical DDM Telemetry" \
+    --files "$TMP_DIR" \
+    -o "$APK_FILE"
+
+cp "$APK_FILE" "/home/ali/Desktop/luci-app-vsol-ddm-1.0.0-r1_noarch.apk" 2>/dev/null || true
+rm -rf "$TMP_DIR"
+
+# 3. Transfer and install
+echo "==> Streaming $APK_FILE to root@$ROUTER_IP:/tmp/..."
+cat "$APK_FILE" | ssh -o StrictHostKeyChecking=no "root@$ROUTER_IP" "cat > /tmp/luci-app-vsol-ddm.apk && apk add --allow-untrusted /tmp/luci-app-vsol-ddm.apk && rm -f /tmp/luci-app-vsol-ddm.apk && rm -rf /tmp/luci-indexcache* /tmp/luci-modulecache* /tmp/vsol_ddm_cache.json /tmp/luci-sessions/* && /etc/init.d/rpcd restart && /etc/init.d/uhttpd restart"
+
+echo "==> [SUCCESS] Package successfully installed via apk add!"
+echo "==> Access dashboard at: http://$ROUTER_IP/cgi-bin/luci/admin/status/vsol_ddm"
+exit 0
