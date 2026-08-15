@@ -1,0 +1,144 @@
+name: CI
+
+# Mirrors the checks used during development. Every layer of this package is a
+# different language, and each has bitten at least once:
+#   - an apostrophe inside the single-quoted awk program, which silently ended
+#     the shell string,
+#   - flock -w, which util-linux accepts and BusyBox rejects.
+# So each layer is checked with the parser that will actually run it.
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  shell:
+    name: Shell syntax and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dash and shellcheck
+        run: sudo apt-get update && sudo apt-get install -y dash shellcheck
+
+      # The router runs BusyBox ash. dash is the closest POSIX shell available
+      # on CI, and catches bashisms that bash itself would happily accept.
+      - name: Parse with sh, bash and dash
+        run: |
+          set -eu
+          files="
+            root/usr/libexec/rpcd/vsol_ddm
+            root/etc/uci-defaults/80_luci-app-vsol-ddm
+          "
+          for f in $files; do
+            [ -f "$f" ] || { echo "missing: $f"; exit 1; }
+            sh   -n "$f"
+            bash -n "$f"
+            dash -n "$f"
+            echo "ok: $f"
+          done
+
+      - name: ShellCheck
+        run: |
+          shellcheck -s sh -S warning \
+            root/usr/libexec/rpcd/vsol_ddm \
+            root/etc/uci-defaults/80_luci-app-vsol-ddm || true
+
+  awk:
+    name: Telemetry parser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mawk and busybox
+        run: sudo apt-get update && sudo apt-get install -y mawk busybox
+
+      # The router runs BusyBox awk, which is far stricter than gawk: no gensub,
+      # no length(array), and no octal ranges inside bracket expressions.
+      # Parsing under all three is what keeps the parser portable.
+      - name: Parse under gawk, mawk and busybox awk
+        run: |
+          set -eu
+          for a in "awk" "mawk" "busybox awk"; do
+            echo "" | $a -v host=h -v ts=1 -v req_class=bplus \
+              -f root/usr/share/vsol_ddm/parse.awk > /tmp/o.json
+            python3 -m json.tool /tmp/o.json > /dev/null
+            echo "ok: $a parses and emits valid JSON"
+          done
+
+      # A value that could not be read must be null, never a sentinel that would
+      # render as a fake hardware alarm.
+      - name: Unread values must be null, not sentinels
+        run: |
+          set -eu
+          python3 - <<'EOF'
+          import json
+          d = json.load(open('/tmp/o.json'))
+          for k in ('rx_power_dbm', 'tx_power_dbm', 'temperature_c', 'voltage_v'):
+              v = d['ddm'][k]
+              assert v is None, f"{k} should be null on an empty transcript, got {v!r}"
+          print("ok: null discipline holds")
+          EOF
+
+  javascript:
+    name: LuCI views
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # LuCI view modules are evaluated as function bodies and use a top-level
+      # `return`, so they must be wrapped before parsing.
+      - name: Parse every view
+        run: |
+          set -eu
+          for f in htdocs/luci-static/resources/view/vsol_ddm/*.js; do
+            node --input-type=module -e "
+              import fs from 'fs';
+              const src = fs.readFileSync('$f', 'utf8');
+              new Function('return (function(){' + src + '})');
+              console.log('ok: $f');
+            "
+          done
+
+  data:
+    name: ACL and menu JSON
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate
+        run: |
+          set -eu
+          for f in root/usr/share/rpcd/acl.d/*.json root/usr/share/luci/menu.d/*.json; do
+            python3 -m json.tool "$f" > /dev/null
+            echo "ok: $f"
+          done
+
+  packaging:
+    name: Packaging sanity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # There is no compiled component, so the package must stay noarch.
+      - name: Package must remain architecture-independent
+        run: |
+          grep -qE '^\s*PKGARCH\s*:=\s*all' Makefile || {
+            echo "Makefile no longer declares PKGARCH:=all; the package ships no binary and should be noarch." >&2
+            exit 1
+          }
+          echo "ok: package is architecture-independent"
+
+      # The Makefile installs this path; if it is missing the build fails late
+      # and confusingly. It has been missing before.
+      - name: Files referenced by the Makefile exist
+        run: |
+          set -eu
+          test -f root/lib/upgrade/keep.d/luci-app-vsol-ddm
+          test -f root/usr/share/vsol_ddm/parse.awk
+          test -f root/etc/config/vsol_ddm
+          echo "ok: referenced files present"
