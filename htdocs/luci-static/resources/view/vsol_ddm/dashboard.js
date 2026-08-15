@@ -595,10 +595,8 @@ return view.extend({
 		};
 
 		var getTxQuality = function(tx, th) {
-			if (isNaN(tx))
-				return quality('off', _('NO DATA'), _('Unknown'));
-			if (tx <= LASER_OFF_DBM)
-				return quality('off', _('LASER INACTIVE'), _('Laser Inactive'));
+			if (isNaN(tx) || tx === 0 || tx <= LASER_OFF_DBM)
+				return quality('off', _('LASER OFF'), _('Laser Off'));
 			if (tx < th.tx_low_alarm)
 				return quality('alarm', _('LOW TX POWER (ALARM)'), _('Low TX Alarm'));
 			if (tx > th.tx_high_alarm)
@@ -1196,14 +1194,18 @@ return view.extend({
 			});
 
 			if (!validSamples.length) {
-				if (curEl) { curEl.textContent = '--'; curEl.style.color = '#9e9e9e'; }
+				var isTxChart = (chartObj.key === 'tx');
+				if (curEl) {
+					curEl.textContent = isTxChart ? _('Laser Off') : '--';
+					curEl.style.color = '#757575';
+				}
 				if (minEl) minEl.textContent = 'Min: --';
 				if (maxEl) maxEl.textContent = 'Max: --';
 				if (avgEl) avgEl.textContent = 'Avg: --';
 				ctx.fillStyle = 'rgba(128,128,128,0.4)';
 				ctx.font = '12px system-ui, sans-serif';
 				ctx.textAlign = 'center';
-				ctx.fillText(_('Waiting for telemetry samples...'), padL + plotW / 2, padT + plotH / 2);
+				ctx.fillText(isTxChart ? _('Laser Off (Transmitter Inactive)') : _('Waiting for telemetry samples...'), padL + plotW / 2, padT + plotH / 2);
 				ctx.restore();
 				return;
 			}
@@ -1238,8 +1240,13 @@ return view.extend({
 			var headerColor = isLatestAlarm ? '#ff5252' : (isLatestWarn ? '#ffb300' : chartObj.color);
 
 			if (curEl) {
-				curEl.textContent = latest.toFixed(2) + ' ' + chartObj.unit;
-				curEl.style.color = headerColor;
+				if (chartObj.key === 'tx' && (latest === 0 || latest <= LASER_OFF_DBM)) {
+					curEl.textContent = _('Laser Off');
+					curEl.style.color = '#757575';
+				} else {
+					curEl.textContent = latest.toFixed(2) + ' ' + chartObj.unit;
+					curEl.style.color = headerColor;
+				}
 			}
 			if (minEl) minEl.textContent = 'Min: ' + minVal.toFixed(1);
 			if (maxEl) maxEl.textContent = 'Max: ' + maxVal.toFixed(1);
@@ -1586,13 +1593,14 @@ return view.extend({
 			]);
 
 			// 2. TX optical power
+			var isTxOff = (isNaN(tx) || tx === 0 || tx <= LASER_OFF_DBM);
 			setTxt('sub-tx', _('Range: 0 to 4 dBm • Cal: ±2 dB'));
 			renderDial('tx', txDial, txQ,
-				(isNaN(tx) || tx <= LASER_OFF_DBM) ? 0 : pctOf(tx, th.tx_low_alarm - 1.0, th.tx_high_alarm + 1.0),
-				(!isNaN(tx) && tx <= LASER_OFF_DBM) ? [_('Laser Off')] : powerLines(tx));
+				isTxOff ? 0 : pctOf(tx, th.tx_low_alarm - 1.0, th.tx_high_alarm + 1.0),
+				isTxOff ? [_('Laser Off')] : powerLines(tx));
 			renderStats('tx', [
 				[_('Transmitter State:'), txQ.badge, txQ.color],
-				[_('Calculated Power:'), fmtPower(tx), txQ.color],
+				[_('Calculated Power:'), isTxOff ? _('Off / 0.00 µW') : fmtPower(tx), txQ.color],
 				[_('Operating Range:'), rangeText(th.tx_low_alarm, th.tx_high_alarm, 'dBm'), SEVERITY.optimal.color],
 				[_('Internal Cal:'), SFF_CALIBRATION.tx, ACCENT],
 				[_('TX Wavelength:'), wlTx, ACCENT]
