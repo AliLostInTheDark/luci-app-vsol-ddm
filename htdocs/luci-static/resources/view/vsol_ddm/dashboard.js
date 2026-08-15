@@ -1108,8 +1108,8 @@ return view.extend({
 			ctx.scale(dpr, dpr);
 			ctx.clearRect(0, 0, width, height);
 
-			var padL = 44;
-			var padR = 16;
+			var padL = (width < 450) ? 42 : 48;
+			var padR = (width < 450) ? 12 : 16;
 			var padT = 14;
 			var padB = 24;
 			var plotW = width - padL - padR;
