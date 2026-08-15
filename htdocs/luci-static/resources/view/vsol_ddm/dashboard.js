@@ -239,6 +239,13 @@ return view.extend({
 			' .hw-omci-tbl td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }' +
 			' .hw-omci-empty { font-size: 0.78em; opacity: 0.6; text-align: center; padding: 12px 0; }' +
 			' .hw-card.half { flex: 1 1 calc(50% - 10px); align-items: stretch; }' +
+			/* Time-series charts section */
+			' .hw-charts-wrap { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: stretch; gap: 20px; }' +
+			' .hw-chart-card { flex: 1 1 calc(50% - 10px); min-width: 280px; align-items: stretch; justify-content: flex-start; }' +
+			' .hw-chart-header { display: flex; justify-content: space-between; align-items: flex-start; width: 100%; gap: 10px; }' +
+			' .hw-chart-metrics { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }' +
+			' .hw-chart-val { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 1.15em; font-weight: 700; line-height: 1.2; }' +
+			' .hw-chart-submetrics { display: flex; gap: 8px; font-size: 0.72em; opacity: 0.65; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }' +
 			' .hw-card h3 { margin: 0 0 6px 0; min-height: 24px; line-height: 1.3; font-size: 1.00em; color: var(--text-color, inherit); opacity: 0.85; text-transform: uppercase; letter-spacing: 0.8px; text-align: center; word-break: break-word; font-weight: 700; }' +
 			' .hw-card-sub { margin: 0 0 14px 0; font-size: 0.72em; opacity: 0.62; text-align: center; line-height: 1.3; word-break: break-word; min-width: 0; }' +
 			' .hw-subtitle { margin: 0 0 14px 0; font-size: 0.72em; line-height: 1.3; letter-spacing: 0.4px; opacity: 0.6; text-align: center; word-break: break-word; min-width: 0; }' +
@@ -658,6 +665,64 @@ return view.extend({
 		container.appendChild(txDial.node);
 		container.appendChild(tempDial.node);
 
+		/* ---------------- Live Time-Series Chart Component ------------- */
+		var MAX_CHART_SAMPLES = 40;
+		var chartHistories = {
+			rx: [],
+			tx: [],
+			temp: [],
+			bias: []
+		};
+
+		var createChartCard = function(key, title, unit, color, minFixed, maxFixed) {
+			var canvas = E('canvas', {
+				id: 'hw-chart-' + key,
+				class: 'hw-chart-canvas',
+				style: 'width: 100%; height: 140px; display: block;'
+			});
+
+			var curVal = E('span', { id: 'hw-chart-cur-' + key, class: 'hw-chart-val', style: 'color: ' + color + ';' }, '--');
+			var minVal = E('span', { id: 'hw-chart-min-' + key, class: 'hw-chart-val-sub' }, 'Min: --');
+			var maxVal = E('span', { id: 'hw-chart-max-' + key, class: 'hw-chart-val-sub' }, 'Max: --');
+
+			var card = E('div', { class: 'hw-card half hw-chart-card' }, [
+				E('div', { class: 'hw-chart-header' }, [
+					E('div', {}, [
+						E('h3', { style: 'text-align: left; margin: 0 0 2px 0;' }, title),
+						E('div', { class: 'hw-card-sub', style: 'text-align: left; margin: 0;' }, _('Live Telemetry History') + ' (' + unit + ')')
+					]),
+					E('div', { class: 'hw-chart-metrics' }, [
+						curVal,
+						E('div', { class: 'hw-chart-submetrics' }, [minVal, maxVal])
+					])
+				]),
+				E('div', { style: 'position: relative; width: 100%; height: 140px; margin-top: 10px;' }, [canvas])
+			]);
+
+			return {
+				key: key,
+				node: card,
+				canvas: canvas,
+				color: color,
+				unit: unit,
+				minFixed: minFixed,
+				maxFixed: maxFixed
+			};
+		};
+
+		var chartsWrap = E('div', { class: 'hw-charts-wrap' });
+		var rxChart = createChartCard('rx', _('Signal Rx Power'), 'dBm', '#00bcd4', -35, -5);
+		var txChart = createChartCard('tx', _('Signal Tx Power'), 'dBm', '#8bc34a', 0, 5);
+		var tempChart = createChartCard('temp', _('Operating Temperature'), '°C', '#ffb300', 20, 85);
+		var biasChart = createChartCard('bias', _('Laser Bias Current'), 'mA', '#ab47bc', 0, 40);
+
+		chartsWrap.appendChild(rxChart.node);
+		chartsWrap.appendChild(txChart.node);
+		chartsWrap.appendChild(tempChart.node);
+		chartsWrap.appendChild(biasChart.node);
+
+		container.appendChild(chartsWrap);
+
 		/*
 		 * 2. Middle rows: four cards, each confined to a single subsystem.
 		 *
@@ -1003,6 +1068,171 @@ return view.extend({
 
 		renderOmciCards(null, true);
 
+		/* ---------------- Time-series Canvas Renderer -------------------- */
+		var renderChart = function(chartObj, dataHistory, thLo, thHi) {
+			var canvas = chartObj.canvas;
+			if (!canvas || !canvas.getContext) return;
+			var ctx = canvas.getContext('2d');
+			if (!ctx) return;
+
+			var dpr = window.devicePixelRatio || 1;
+			var rect = canvas.getBoundingClientRect();
+			var width = rect.width || 300;
+			var height = rect.height || 140;
+
+			if (canvas.width !== Math.round(width * dpr) || canvas.height !== Math.round(height * dpr)) {
+				canvas.width = Math.round(width * dpr);
+				canvas.height = Math.round(height * dpr);
+			}
+
+			ctx.save();
+			ctx.scale(dpr, dpr);
+			ctx.clearRect(0, 0, width, height);
+
+			var padL = 38;
+			var padR = 10;
+			var padT = 10;
+			var padB = 16;
+			var plotW = width - padL - padR;
+			var plotH = height - padT - padB;
+
+			if (plotW <= 10 || plotH <= 10) {
+				ctx.restore();
+				return;
+			}
+
+			var valid = dataHistory.filter(function(d) { return d != null && isFinite(d.val); });
+			var curEl = document.getElementById('hw-chart-cur-' + chartObj.key);
+			var minEl = document.getElementById('hw-chart-min-' + chartObj.key);
+			var maxEl = document.getElementById('hw-chart-max-' + chartObj.key);
+
+			if (!valid.length) {
+				if (curEl) curEl.textContent = '--';
+				if (minEl) minEl.textContent = 'Min: --';
+				if (maxEl) maxEl.textContent = 'Max: --';
+				ctx.fillStyle = 'rgba(128,128,128,0.3)';
+				ctx.font = '12px system-ui, sans-serif';
+				ctx.textAlign = 'center';
+				ctx.fillText(_('Waiting for samples...'), padL + plotW / 2, padT + plotH / 2);
+				ctx.restore();
+				return;
+			}
+
+			var minVal = Infinity, maxVal = -Infinity;
+			for (var i = 0; i < valid.length; i++) {
+				if (valid[i].val < minVal) minVal = valid[i].val;
+				if (valid[i].val > maxVal) maxVal = valid[i].val;
+			}
+
+			if (chartObj.minFixed != null) minVal = Math.min(minVal, chartObj.minFixed);
+			if (chartObj.maxFixed != null) maxVal = Math.max(maxVal, chartObj.maxFixed);
+			if (thLo != null && isFinite(thLo)) minVal = Math.min(minVal, thLo);
+			if (thHi != null && isFinite(thHi)) maxVal = Math.max(maxVal, thHi);
+
+			if (maxVal === minVal) {
+				maxVal += 1;
+				minVal -= 1;
+			}
+
+			var span = maxVal - minVal;
+			var yPad = span * 0.08;
+			var yMin = minVal - yPad;
+			var yMax = maxVal + yPad;
+
+			var latest = valid[valid.length - 1].val;
+			if (curEl) curEl.textContent = latest.toFixed(2) + ' ' + chartObj.unit;
+			if (minEl) minEl.textContent = 'Min: ' + minVal.toFixed(1);
+			if (maxEl) maxEl.textContent = 'Max: ' + maxVal.toFixed(1);
+
+			// Draw Grid lines & Y labels
+			ctx.strokeStyle = 'rgba(128, 128, 128, 0.12)';
+			ctx.lineWidth = 1;
+			ctx.fillStyle = 'rgba(128, 128, 128, 0.6)';
+			ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+			ctx.textAlign = 'right';
+
+			var gridSteps = 3;
+			for (var g = 0; g <= gridSteps; g++) {
+				var gy = padT + (plotH * g / gridSteps);
+				var gVal = yMax - ((yMax - yMin) * g / gridSteps);
+				ctx.beginPath();
+				ctx.moveTo(padL, gy);
+				ctx.lineTo(padL + plotW, gy);
+				ctx.stroke();
+				ctx.fillText(gVal.toFixed(1), padL - 5, gy + 3);
+			}
+
+			// Threshold guide lines (dashed)
+			if (thLo != null && isFinite(thLo) && thLo >= yMin && thLo <= yMax) {
+				var tLoY = padT + plotH * (1 - (thLo - yMin) / (yMax - yMin));
+				ctx.save();
+				ctx.setLineDash([4, 4]);
+				ctx.strokeStyle = 'rgba(255, 82, 82, 0.45)';
+				ctx.beginPath();
+				ctx.moveTo(padL, tLoY);
+				ctx.lineTo(padL + plotW, tLoY);
+				ctx.stroke();
+				ctx.restore();
+			}
+			if (thHi != null && isFinite(thHi) && thHi >= yMin && thHi <= yMax) {
+				var tHiY = padT + plotH * (1 - (thHi - yMin) / (yMax - yMin));
+				ctx.save();
+				ctx.setLineDash([4, 4]);
+				ctx.strokeStyle = 'rgba(255, 82, 82, 0.45)';
+				ctx.beginPath();
+				ctx.moveTo(padL, tHiY);
+				ctx.lineTo(padL + plotW, tHiY);
+				ctx.stroke();
+				ctx.restore();
+			}
+
+			// Plot line & Area
+			var points = [];
+			var totalSlots = MAX_CHART_SAMPLES;
+			var n = dataHistory.length;
+			for (var p = 0; p < n; p++) {
+				var item = dataHistory[p];
+				if (item == null || !isFinite(item.val)) continue;
+				var px = padL + (p / (totalSlots - 1)) * plotW;
+				var py = padT + plotH * (1 - (item.val - yMin) / (yMax - yMin));
+				points.push({ x: px, y: py, val: item.val });
+			}
+
+			if (points.length >= 2) {
+				var grad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+				grad.addColorStop(0, chartObj.color + '44');
+				grad.addColorStop(1, chartObj.color + '02');
+
+				ctx.beginPath();
+				ctx.moveTo(points[0].x, padT + plotH);
+				for (var k = 0; k < points.length; k++) {
+					ctx.lineTo(points[k].x, points[k].y);
+				}
+				ctx.lineTo(points[points.length - 1].x, padT + plotH);
+				ctx.closePath();
+				ctx.fillStyle = grad;
+				ctx.fill();
+
+				ctx.beginPath();
+				ctx.moveTo(points[0].x, points[0].y);
+				for (var m = 1; m < points.length; m++) {
+					ctx.lineTo(points[m].x, points[m].y);
+				}
+				ctx.strokeStyle = chartObj.color;
+				ctx.lineWidth = 2;
+				ctx.lineJoin = 'round';
+				ctx.stroke();
+
+				var lastPt = points[points.length - 1];
+				ctx.beginPath();
+				ctx.arc(lastPt.x, lastPt.y, 3.5, 0, 2 * Math.PI);
+				ctx.fillStyle = chartObj.color;
+				ctx.fill();
+			}
+
+			ctx.restore();
+		};
+
 		/* ---------------- Shared DOM helpers ---------------------------- */
 		var setTxt = function(id, val) {
 			var el = document.getElementById(id);
@@ -1191,7 +1421,26 @@ return view.extend({
 				[_('Laser Bias Current:'), fmtBias(bias), biasQ.color]
 			]);
 
-			// 4. Card 1: GPON & OMCI management
+			// 4. Update Time-Series Chart Data & Canvas Renderers
+			var tsNow = Date.now();
+			if (healthy) {
+				if (!isNaN(rx)) chartHistories.rx.push({ time: tsNow, val: rx });
+				if (!isNaN(tx)) chartHistories.tx.push({ time: tsNow, val: tx });
+				if (!isNaN(temp)) chartHistories.temp.push({ time: tsNow, val: temp });
+				if (!isNaN(bias)) chartHistories.bias.push({ time: tsNow, val: bias });
+
+				while (chartHistories.rx.length > MAX_CHART_SAMPLES) chartHistories.rx.shift();
+				while (chartHistories.tx.length > MAX_CHART_SAMPLES) chartHistories.tx.shift();
+				while (chartHistories.temp.length > MAX_CHART_SAMPLES) chartHistories.temp.shift();
+				while (chartHistories.bias.length > MAX_CHART_SAMPLES) chartHistories.bias.shift();
+			}
+
+			renderChart(rxChart, chartHistories.rx, th.rx_pwr_low_alarm, th.rx_pwr_high_alarm);
+			renderChart(txChart, chartHistories.tx, th.tx_pwr_low_alarm, th.tx_pwr_high_alarm);
+			renderChart(tempChart, chartHistories.temp, th.temp_low_alarm, th.temp_high_alarm);
+			renderChart(biasChart, chartHistories.bias, th.bias_low_alarm, th.bias_high_alarm);
+
+			// 5. Card 1: GPON & OMCI management
 			var stateRaw = (onu.state !== undefined && onu.state !== null && onu.state !== '')
 				? String(onu.state).toUpperCase()
 				: (typeof onu.state_raw === 'string' ? onu.state_raw.toUpperCase() : '');
