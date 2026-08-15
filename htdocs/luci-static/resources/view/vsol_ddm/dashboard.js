@@ -265,11 +265,6 @@ return view.extend({
 			' .hw-table th, .hw-table td { padding: 9px 12px; border-bottom: 1px solid var(--border-color, rgba(128, 128, 128, 0.15)); text-align: left; white-space: nowrap; line-height: 1.3; }' +
 			' .hw-table th { font-weight: 700; opacity: 0.65; text-transform: uppercase; font-size: 0.78em; letter-spacing: 0.5px; color: var(--text-color, inherit); }' +
 			' .hw-table td { color: var(--text-color, inherit); }' +
-			' @media (max-width: 640px) {' +
-			'   .hw-stat-row { flex-wrap: wrap; }' +
-			'   .hw-stat-label { white-space: normal; overflow: visible; text-overflow: clip; }' +
-			'   .hw-stat-value { text-align: right; }' +
-			' }' +
 			' @media (max-width: 600px) {' +
 			'   .hw-dashboard .cbi-value-field > input[type=text],' +
 			'   .hw-dashboard .cbi-value-field > select { width: 100%; box-sizing: border-box; min-width: 0; }' +
@@ -282,16 +277,12 @@ return view.extend({
 			'   .hw-card { padding: 15px; }' +
 			'   .hw-card.half { flex-basis: 100%; }' +
 			'   .hw-dial { transform: scale(0.9); }' +
-			'   .hw-kv { flex-direction: column; align-items: flex-start; gap: 2px; }' +
-			'   .hw-kv-v { text-align: left; overflow-wrap: anywhere; }' +
-			/* A label and a signed range cannot share a line at phone widths
-			 * without one of them being squeezed, so the stat rows stack the same
-			 * way the key/value rows do and both render in full. */
-			'   .hw-stat-row { flex-direction: column; align-items: flex-start; gap: 1px; }' +
-			'   .hw-stat-label { white-space: normal; }' +
-			'   .hw-stat-value { text-align: left; overflow-wrap: anywhere; }' +
 			'   .hw-dial-line { font-size: 1.05em; }' +
 			'   .hw-dial-single { font-size: 1.05em; }' +
+			'   .hw-kv-k { font-size: 0.72em; }' +
+			'   .hw-kv-v { font-size: 0.82em; }' +
+			'   .hw-stat-label { font-size: 0.80em; }' +
+			'   .hw-stat-value { font-size: 0.82em; }' +
 			' }'
 		);
 
