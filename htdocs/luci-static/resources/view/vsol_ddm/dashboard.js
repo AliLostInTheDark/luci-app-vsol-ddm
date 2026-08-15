@@ -732,7 +732,7 @@ return view.extend({
 		}
 
 		var renderAllCharts = function(statusData) {
-			var th = (statusData && statusData.ddm && statusData.ddm.thresholds) ? statusData.ddm.thresholds : SFF_THRESHOLDS;
+			var th = resolveThresholds(statusData);
 			renderChart(rxChart, chartHistories.rx, th.rx_low_alarm, th.rx_high_alarm);
 			renderChart(txChart, chartHistories.tx, th.tx_low_alarm, th.tx_high_alarm);
 			renderChart(tempChart, chartHistories.temp, th.temp_low_alarm, th.temp_high_alarm);
@@ -1341,7 +1341,6 @@ return view.extend({
 					ctx.textAlign = 'left';
 				} else if (ls === numVerticalLines) {
 					ctx.textAlign = 'right';
-					timeLabel = _('Now') + ' (' + hh + ':' + mm + ')';
 				} else {
 					ctx.textAlign = 'center';
 				}
