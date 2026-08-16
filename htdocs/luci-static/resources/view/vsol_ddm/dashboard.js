@@ -102,6 +102,16 @@ var quality = function(severity, label, badge) {
 	return { color: s.color, bg: s.bg, label: label, badge: badge, severity: severity };
 };
 
+var SEVERITY = {
+	get alarm() { return getSeverity('alarm'); },
+	get warn() { return getSeverity('warn'); },
+	get optimal() { return getSeverity('optimal'); },
+	get off() { return getSeverity('off'); }
+};
+
+/* Accent used for purely informational (non-graded) values. */
+var ACCENT = '#00bcd4';
+
 /* ------------------------------------------------------------------------
  * Optical class profiles. These are the ONLY optical figures used locally,
  * and they are used solely as a fallback when the backend does not supply a
