@@ -31,6 +31,9 @@ An ONT reports far more than the four numbers a typical DDM page shows. This das
 - **The optic states its own class.** A V2802RH returns a vendor string of `ONU_B+_G`, so the ITU-T G.984.2 power budget class is read from the hardware rather than assumed. Where an optic says nothing, the class is labelled as assumed instead of presented as confirmed.
 - **Limits follow the datasheet, not the class minimum.** The V2802RH transmit window is 0 to +4 dBm — narrower than G.984.2 permits a Class B+ ONU in general — and grading against the vendor figure is what tells you whether *this* optic is in spec.
 - **Loss of Signal on both sides of the window.** Below sensitivity there is no framing; above overload the receiver is saturated and there is likewise none.
+- **The OMCI managed entities, as the OLT provisioned them.** Six managed entities read straight from the ONT and rendered one card each, so the VLANs, the tagging rules and the OLT's own identity are visible without a telnet session.
+- **Twenty-four hours of history, in RAM.** A circular buffer and a background collector feed charts for receive power, transmit power, temperature and bias, with a 1h/6h/12h/24h range switcher and threshold bands drawn behind the trace.
+- **Nothing is contacted until you say what to contact.** The address and credentials have no defaults anywhere in the package; until all three are set the dashboard stays empty and no connection is attempted.
 - **Instant page load.** A cached reading paints immediately and refreshes behind the response, bounded so a link that died minutes ago cannot masquerade as healthy.
 - **One package, every architecture.** No compiled component, so a single `.apk` installs anywhere.
 
@@ -109,9 +112,35 @@ Those four lower cards do not overlap: each covers one subsystem and nothing els
 
 **Diagnostic Threshold Limits** — every reading against its low alarm, low warning, high warning and high alarm. The limits come from the backend payload, so the table and the status badges cannot disagree.
 
+### Historical charts
+
+Receive power, transmit power, temperature and bias current are sampled into a 24-hour circular buffer held in RAM, and drawn as full-width time-series cards. The range switcher covers 1h, 6h, 12h and 24h, with subdivisions that follow the window rather than being fixed, and sample dots at a consistent interval. The optimal and warning bands are painted behind the trace, so a reading that is merely inside its alarm limits is still visibly distinct from one sitting in the middle of its range. Nothing is written to flash.
+
+### OMCI managed entities
+
+Read on demand from the ONT's own `omcicli`, one card per managed entity:
+
+| ME | Card | What it shows |
+| :-- | :--- | :--- |
+| 11 | Ethernet UNI | the physical Ethernet user network interfaces |
+| 84 | VLAN Tag Filter | the VLANs the ONT is provisioned to accept |
+| 131 | OLT-G Identification | the upstream OLT's vendor and time of day |
+| 171 | Extended VLAN Tagging | the tagging and translation rules, as a table of filter and treatment tuples |
+| 329 | VEIP | the virtual Ethernet interface point |
+
+Vendor identifiers arrive as four packed ASCII bytes in a hex word and are decoded beside the raw value, so `0x414c434c` also reads as `ALCL`. Administrative and operational state are printed as reported, with the ITU-T G.988 meaning stated alongside rather than translated into a coloured badge — this firmware does not report those two consistently between its ports, and a badge would have been a guess.
+
+These are provisioning state rather than telemetry: they change when the OLT reconfigures the ONT, not between polls, so they are fetched on demand and cached rather than driven from the polling loop.
+
+### Restarting the ONT
+
+A restart control sits at the top of the page. It asks for confirmation first, reports what the ONT actually returned, and drops the caches so the dashboard repopulates from the rebooted device.
+
 ## Settings
 
 Under **Status → VSOL V2802RH DDM → Settings**: ONT address, telnet port, credentials, polling interval, connection timeout, unit system (dual, metric or imperial) and optical class.
+
+**The address, username and password are required and have no defaults.** They identify and authenticate against one specific ONT, so shipping a value would either be wrong for your hardware or write someone else's credential into every router that installs this. Until all three are set the backend reports itself as unconfigured, every card stays empty, and no connection is attempted — which is a different state from a device that failed to answer, and the dashboard says so.
 
 The optical class setting is a fallback. When the optic states its own class — as the V2802RH does — the hardware wins and the setting is ignored.
 
@@ -122,6 +151,10 @@ Settings survive both package upgrade (`conffiles`) and firmware reflash (`/lib/
 The backend is shell and `awk`. `/usr/libexec/rpcd/vsol_ddm` opens one telnet session to the ONT with BusyBox `nc`, pipelines every diagnostic command into it, strips the telnet control bytes, and hands the transcript to `/usr/share/vsol_ddm/parse.awk`, which emits the dashboard JSON.
 
 Commands are pipelined rather than issued one at a time because the ONT accepts only about **two concurrent telnet sessions** — a third connect times out. Two browser tabs polling independently were enough to starve any other caller and produce a spurious "unreachable" against a perfectly healthy ONT. Device access is therefore serialised behind a lock, and callers arriving during an in-flight query collapse onto its result rather than opening another session.
+
+The OMCI read is a second, separate session at the ONT's top-level CLI prompt, where `omcicli` lives, rather than the diagnostic shell the telemetry path enters. Its output needs real parsing rather than field scraping: instances are delimited by runs of `=`, every line is separated by a blank one, ME 171 nests a repeating filter and treatment table, and some fields carry raw bytes rather than text — the `Version` field on this firmware is `0x06 0x02 0x04`, which would otherwise emit control characters into the JSON. `/usr/share/vsol_ddm/omci.awk` handles the structure and sanitises to printable ASCII, walking the string because BusyBox `awk` rejects octal ranges inside bracket expressions. It produces identical output under gawk, mawk and BusyBox awk.
+
+History is collected by a small background service, kept in a circular buffer under `/tmp`, and capped at 24 hours. It lives in RAM deliberately: a telemetry chart is not worth flash wear on a router.
 
 Optical limits come from the V2802RH datasheet: receiver sensitivity −27 dBm, overload −8 dBm on GPON and −3 dBm on EPON, transmit window 0 to +4 dBm, wavelengths 1310 nm upstream and 1490 nm downstream. The ONT reports its PON port as EPON PX20+ and GPON Class B+. Transceiver temperature, voltage and bias limits follow SFF-8472. Warning bands are derived 1.0 dB inside each receiver alarm limit and 0.5 dB inside each transmitter one, so a warning band can never drift outside its own alarm band.
 
