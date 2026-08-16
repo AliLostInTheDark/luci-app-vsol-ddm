@@ -763,7 +763,7 @@ return view.extend({
 			var canvas = E('canvas', {
 				id: 'hw-chart-' + key,
 				class: 'hw-chart-canvas',
-				style: 'width: 100%; height: 180px; display: block;'
+				style: 'width: 100%; height: 180px; display: block; cursor: crosshair;'
 			});
 
 			var curVal = E('span', { id: 'hw-chart-cur-' + key, class: 'hw-chart-val', style: 'color: ' + color + ';' }, '--');
@@ -793,10 +793,10 @@ return view.extend({
 				}, w.label);
 			}));
 
-			var card = E('div', { class: 'hw-card wide hw-chart-card', title: tooltip || '' }, [
+			var card = E('div', { class: 'hw-card wide hw-chart-card' }, [
 				E('div', { class: 'hw-chart-header' }, [
 					E('div', {}, [
-						E('h3', { style: 'text-align: left; margin: 0 0 2px 0;', title: tooltip || '' }, title),
+						E('h3', { style: 'text-align: left; margin: 0 0 2px 0; cursor: help;', title: tooltip || '' }, title),
 						E('div', { class: 'hw-card-sub', style: 'text-align: left; margin: 0;' }, (subtitle || (_('Historical Trend') + ' (' + unit + ')'))),
 						rangeBtns
 					]),
@@ -808,15 +808,54 @@ return view.extend({
 				E('div', { style: 'position: relative; width: 100%; height: 180px; margin-top: 10px;' }, [canvas])
 			]);
 
-			return {
+			var chartObj = {
 				key: key,
 				node: card,
 				canvas: canvas,
 				color: color,
 				unit: unit,
 				minFixed: minFixed,
-				maxFixed: maxFixed
+				maxFixed: maxFixed,
+				renderedDots: [],
+				hoveredDot: null,
+				lastArgs: null
 			};
+
+			canvas.addEventListener('mousemove', function(ev) {
+				var rect = canvas.getBoundingClientRect();
+				var mouseX = (ev.clientX - rect.left);
+				var nearest = null;
+				var minDist = 25;
+
+				if (chartObj.renderedDots && chartObj.renderedDots.length) {
+					for (var i = 0; i < chartObj.renderedDots.length; i++) {
+						var dot = chartObj.renderedDots[i];
+						var dist = Math.abs(dot.x - mouseX);
+						if (dist < minDist) {
+							minDist = dist;
+							nearest = dot;
+						}
+					}
+				}
+
+				if (chartObj.hoveredDot !== nearest) {
+					chartObj.hoveredDot = nearest;
+					if (chartObj.lastArgs) {
+						renderChart(chartObj, chartObj.lastArgs.dataHistory, chartObj.lastArgs.thLo, chartObj.lastArgs.thHi);
+					}
+				}
+			});
+
+			canvas.addEventListener('mouseleave', function() {
+				if (chartObj.hoveredDot) {
+					chartObj.hoveredDot = null;
+					if (chartObj.lastArgs) {
+						renderChart(chartObj, chartObj.lastArgs.dataHistory, chartObj.lastArgs.thLo, chartObj.lastArgs.thHi);
+					}
+				}
+			});
+
+			return chartObj;
 		};
 
 		var chartsWrap = E('div', { class: 'hw-charts-wrap' });
@@ -1205,6 +1244,7 @@ return view.extend({
 
 		/* ---------------- Time-series Canvas Renderer (Grafana Style) --- */
 		var renderChart = function(chartObj, dataHistory, thLo, thHi) {
+			chartObj.lastArgs = { dataHistory: dataHistory, thLo: thLo, thHi: thHi };
 			var canvas = chartObj.canvas;
 			if (!canvas || !canvas.getContext) return;
 			var ctx = canvas.getContext('2d');
@@ -1480,21 +1520,134 @@ return view.extend({
 				ctx.stroke();
 			}
 
-			// 3. Draw small Grafana point dots at dotIntervalMs (and at endpoints)
-			var lastDotTime = -Infinity;
-			for (var d = 0; d < points.length; d++) {
-				var pt = points[d];
-				if (pt.offline) continue;
-				var ptTime = pt.time || (minTime + ((pt.x - padL) / plotW) * WINDOW_MS);
-				var isDot = (ptTime - lastDotTime >= dotIntervalMs - 10000) || (d === points.length - 1) || (d === 0);
-				if (isDot) {
-					lastDotTime = ptTime;
-					ctx.beginPath();
-					ctx.setLineDash([]);
-					ctx.arc(pt.x, pt.y, 2.0, 0, 2 * Math.PI);
-					ctx.fillStyle = pt.alarm ? '#ff5252' : chartObj.color;
-					ctx.fill();
+			// 3. Draw consistent 30-minute interval dots (and current endpoint dot)
+			var DOT_INTERVAL_MS = 30 * 60 * 1000;
+			var firstSlot = Math.ceil(minTime / DOT_INTERVAL_MS) * DOT_INTERVAL_MS;
+			var lastSlot = Math.floor(maxTime / DOT_INTERVAL_MS) * DOT_INTERVAL_MS;
+			var renderedDots = [];
+
+			for (var slotTime = firstSlot; slotTime <= lastSlot; slotTime += DOT_INTERVAL_MS) {
+				var bestPt = null;
+				var minDiff = 15 * 60 * 1000; // within 15 mins of slot
+				for (var s = 0; s < validSamples.length; s++) {
+					var diff = Math.abs(validSamples[s].time - slotTime);
+					if (diff < minDiff) {
+						minDiff = diff;
+						bestPt = validSamples[s];
+					}
 				}
+				if (bestPt) {
+					var dotX = padL + Math.max(0, Math.min(1, (bestPt.time - minTime) / WINDOW_MS)) * plotW;
+					var dotY = padT + plotH * (1 - (bestPt.val - yMin) / (yMax - yMin));
+					var isAlarm = ((thLo != null && bestPt.val < thLo) || (thHi != null && bestPt.val > thHi));
+					renderedDots.push({
+						x: dotX,
+						y: dotY,
+						time: bestPt.time,
+						val: bestPt.val,
+						alarm: isAlarm
+					});
+				}
+			}
+
+			// Include latest live point if available
+			if (validSamples.length > 0) {
+				var lastSample = validSamples[validSamples.length - 1];
+				var lastX = padL + Math.max(0, Math.min(1, (lastSample.time - minTime) / WINDOW_MS)) * plotW;
+				var lastY = padT + plotH * (1 - (lastSample.val - yMin) / (yMax - yMin));
+				var lastAlarm = ((thLo != null && lastSample.val < thLo) || (thHi != null && lastSample.val > thHi));
+				var isDuplicate = renderedDots.some(function(rd) { return Math.abs(rd.x - lastX) < 4; });
+				if (!isDuplicate) {
+					renderedDots.push({
+						x: lastX,
+						y: lastY,
+						time: lastSample.time,
+						val: lastSample.val,
+						alarm: lastAlarm
+					});
+				}
+			}
+
+			chartObj.renderedDots = renderedDots;
+
+			// Draw standard dots
+			ctx.setLineDash([]);
+			for (var d = 0; d < renderedDots.length; d++) {
+				var rDot = renderedDots[d];
+				ctx.beginPath();
+				ctx.arc(rDot.x, rDot.y, 2.5, 0, 2 * Math.PI);
+				ctx.fillStyle = rDot.alarm ? '#ff5252' : chartObj.color;
+				ctx.fill();
+			}
+
+			// 4. If a dot is hovered, render crosshair, highlighted dot, and sleek tooltip
+			if (chartObj.hoveredDot) {
+				var hDot = chartObj.hoveredDot;
+
+				// Vertical dashed crosshair line
+				ctx.save();
+				ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+				ctx.lineWidth = 1;
+				ctx.setLineDash([3, 3]);
+				ctx.beginPath();
+				ctx.moveTo(hDot.x, padT);
+				ctx.lineTo(hDot.x, padT + plotH);
+				ctx.stroke();
+				ctx.restore();
+
+				// Halo / Highlight on the hovered dot
+				ctx.beginPath();
+				ctx.arc(hDot.x, hDot.y, 5.5, 0, 2 * Math.PI);
+				ctx.fillStyle = '#ffffff';
+				ctx.fill();
+
+				ctx.beginPath();
+				ctx.arc(hDot.x, hDot.y, 3.5, 0, 2 * Math.PI);
+				ctx.fillStyle = hDot.alarm ? '#ff5252' : chartObj.color;
+				ctx.fill();
+
+				// Tooltip formatting
+				var hDate = new Date(hDot.time);
+				var hH = ('0' + hDate.getHours()).slice(-2);
+				var hM = ('0' + hDate.getMinutes()).slice(-2);
+				var hTimeStr = hH + ':' + hM;
+				var hValStr;
+				if (chartObj.key === 'tx' && (hDot.val === 0 || hDot.val <= LASER_OFF_DBM)) {
+					hValStr = _('Laser Off');
+				} else {
+					hValStr = hDot.val.toFixed(2) + ' ' + chartObj.unit;
+				}
+
+				var tipText = hTimeStr + ' : ' + hValStr;
+				ctx.font = 'bold 11px ui-monospace, SFMono-Regular, Menlo, monospace';
+				var textWidth = ctx.measureText(tipText).width;
+				var tipW = textWidth + 16;
+				var tipH = 22;
+
+				var tipX = hDot.x + 10;
+				if (tipX + tipW > padL + plotW) {
+					tipX = hDot.x - tipW - 10;
+				}
+				var tipY = Math.max(padT + 4, Math.min(padT + plotH - tipH - 4, hDot.y - tipH / 2));
+
+				// Tooltip bubble background
+				ctx.fillStyle = 'rgba(20, 22, 26, 0.95)';
+				ctx.strokeStyle = hDot.alarm ? '#ff5252' : chartObj.color;
+				ctx.lineWidth = 1;
+				ctx.beginPath();
+				if (ctx.roundRect) {
+					ctx.roundRect(tipX, tipY, tipW, tipH, 5);
+				} else {
+					ctx.rect(tipX, tipY, tipW, tipH);
+				}
+				ctx.fill();
+				ctx.stroke();
+
+				// Tooltip text
+				ctx.fillStyle = '#ffffff';
+				ctx.textAlign = 'left';
+				ctx.textBaseline = 'middle';
+				ctx.fillText(tipText, tipX + 8, tipY + tipH / 2);
 			}
 
 			ctx.restore();
