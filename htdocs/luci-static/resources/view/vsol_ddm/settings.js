@@ -26,10 +26,12 @@ return view.extend({
 		o.default = '1';
 		o.rmempty = false;
 
+		/* No default address. It is specific to the user's own network, and a
+		   built-in guess would have the dashboard probing whatever device
+		   happens to hold that address. */
 		o = s.option(form.Value, 'host', _('ONT IP Address'),
-			_('IPv4 address of the VSOL V2802RH ONT (Default: 192.168.100.1).'));
+			_('IPv4 address of the ONT. Required — the dashboard stays empty until this, the username and the password are all set.'));
 		o.datatype = 'ip4addr';
-		o.default = '192.168.100.1';
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'port', _('Telnet Port'),
@@ -38,15 +40,15 @@ return view.extend({
 		o.default = '23';
 		o.rmempty = false;
 
+		/* Credentials are never defaulted. A password baked in here would be
+		   written into /etc/config on every router that installs the package. */
 		o = s.option(form.Value, 'username', _('Telnet Username'),
-			_('Telnet management username (Default: admin).'));
-		o.default = 'admin';
+			_('Telnet management username for the ONT. Required.'));
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'password', _('Telnet Password'),
-			_('Telnet management password.'));
+			_('Telnet management password for the ONT. Required.'));
 		o.password = true;
-		o.default = 'Admin@123';
 		o.rmempty = false;
 
 		o = s.option(form.ListValue, 'unit_system', _('Default Unit System'),
@@ -78,10 +80,10 @@ return view.extend({
 			return callTestConnection().then(function(res) {
 				if (res && res.connected) {
 					ui.addNotification(null, E('p', { class: 'alert-message success' },
-						_('Successfully connected and authenticated to VSOL V2802RH at ') + (res.host || '192.168.100.1')));
+						_('Successfully connected and authenticated to the ONT at ') + (res.host || '')));
 				} else {
 					ui.addNotification(null, E('p', { class: 'alert-message warning' },
-						_('Connection failed: ') + ((res && res.error) || _('Could not reach Telnet service at 192.168.100.1:23.'))));
+						_('Connection failed: ') + ((res && res.error) || _('Could not reach the ONT\'s telnet service.'))));
 				}
 			}).catch(function(err) {
 				ui.addNotification(null, E('p', { class: 'alert-message warning' }, err.message || err));

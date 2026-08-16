@@ -23,11 +23,12 @@ set_default() {
 	fi
 }
 
+# host, username and password are never seeded. They are specific to the user's
+# own ONT, and a default password here would be written into every router's
+# /etc/config on install. An upgrade still leaves values the user already set
+# untouched, because set_default only writes an option that is absent.
 set_default enabled       1
-set_default host          192.168.100.1
 set_default port          23
-set_default username      admin
-set_default password      Admin@123
 set_default poll_interval 3
 set_default timeout       3
 set_default unit_system   dual

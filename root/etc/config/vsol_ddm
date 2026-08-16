@@ -1,9 +1,14 @@
 config vsol_ddm 'main'
 	option enabled '1'
-	option host '192.168.100.1'
 	option port '23'
-	option username 'admin'
-	option password 'Admin@123'
 	option poll_interval '3'
 	option timeout '3'
 	option unit_system 'dual'
+	option optical_class 'bplus'
+	# host, username and password are deliberately absent. They identify and
+	# authenticate against one specific piece of hardware, so they can only come
+	# from the user. Until all three are set the backend reports itself as
+	# unconfigured and never opens a connection.
+	option host ''
+	option username ''
+	option password ''

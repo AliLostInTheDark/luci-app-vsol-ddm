@@ -62,12 +62,16 @@ take_lock() {
 
 umask 077
 
+# The address and credentials have no defaults on purpose. They identify and
+# authenticate against one specific ONT, so a built-in value is either wrong for
+# the user's hardware or - worse - a real credential shipped to every router.
+# Only settings that are safe to assume carry defaults here.
 get_config() {
 	ENABLED="1"
-	HOST="192.168.100.1"
+	HOST=""
 	PORT="23"
-	USER="admin"
-	PASS="Admin@123"
+	USER=""
+	PASS=""
 	TIMEOUT="3"
 	OPTICAL_CLASS="bplus"
 
@@ -91,6 +95,25 @@ get_config() {
 	# Ensure socket timeout is at least 3 seconds and at most 30 seconds.
 	[ "$TIMEOUT" -lt 3 ] && TIMEOUT=3
 	[ "$TIMEOUT" -gt 30 ] && TIMEOUT=30
+}
+
+# True once the user has supplied everything needed to reach their ONT.
+#
+# All three are required. With no address there is nothing to connect to; with
+# no credentials the session cannot authenticate and the CLI would sit at a
+# login prompt until the timeout. Probing a guessed address is worse than doing
+# nothing: on someone else's network that address belongs to another device.
+is_configured() {
+	[ -n "$HOST" ] && [ -n "$USER" ] && [ -n "$PASS" ]
+}
+
+# Envelope for "the user has not pointed this at an ONT yet".
+#
+# Distinct from a failure: `configured` is false rather than `success` merely
+# being false, so the dashboard can render empty cards instead of an error
+# banner. Nothing has gone wrong - there is simply nothing to read.
+unconfigured_json() {
+	printf '{"success": false, "configured": false, "connected": false, "host": "", "error": "Not configured. Set the ONT address, username and password under Settings."}\n'
 }
 
 HISTORY_FILE="/tmp/vsol_ddm_history.json"
@@ -268,6 +291,8 @@ do_query() {
 fetch_telemetry() {
 	get_config
 
+	is_configured || { unconfigured_json; return; }
+
 	if [ "$ENABLED" != "1" ]; then
 		printf '{"success": false, "connected": false, "host": "%s", "error": "Monitoring has been disabled in configuration"}\n' "$HOST"
 		return
@@ -344,6 +369,8 @@ fetch_telemetry() {
 test_connection() {
 	get_config
 
+	is_configured || { unconfigured_json; return; }
+
 	# Takes the same lock: a connectivity test must not itself become the session
 	# that tips the ONT over its concurrent-session limit.
 	if [ "$HAVE_FLOCK" = "1" ]; then
@@ -394,6 +421,8 @@ OMCI_CACHE_TTL=60
 # top-level command.
 fetch_omci() {
 	get_config
+
+	is_configured || { unconfigured_json; return; }
 
 	if [ "$ENABLED" != "1" ]; then
 		printf '{"success": false, "connected": false, "host": "%s", "error": "Monitoring has been disabled in configuration"}\n' "$HOST"
@@ -454,6 +483,8 @@ fetch_omci() {
 # so the dashboard repopulates from the rebooted ONT.
 do_restart() {
 	get_config
+
+	is_configured || { unconfigured_json; return; }
 
 	{
 		printf '%s\r\n%s\r\n' "$USER" "$PASS"
