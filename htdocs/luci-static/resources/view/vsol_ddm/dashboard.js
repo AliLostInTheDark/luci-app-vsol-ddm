@@ -257,7 +257,7 @@ return view.extend({
 			' .hw-omci-wrap { flex: 1 1 100%; min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; align-items: stretch; gap: 20px; width: 100%; }' +
 			' .hw-omci-wrap .hw-card { flex: 1 1 calc(50% - 10px); min-width: 320px; max-width: 100%; align-items: stretch; justify-content: flex-start; }' +
 			' .hw-omci-wrap .hw-card.wide { flex: 1 1 100%; max-width: 100%; }' +
-			' .hw-omci-inst { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; margin: 0 0 12px 0; padding: 12px 14px; border: 1px solid var(--border-color, rgba(128,128,128,0.15)); border-radius: 8px; background: rgba(0, 0, 0, 0.08); overflow: hidden; }' +
+			' .hw-omci-inst { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; margin: 0 0 12px 0; padding: 12px 14px; border: 1px solid var(--border-color, rgba(128,128,128,0.15)); border-radius: 8px; background: var(--background-color-medium, rgba(128, 128, 128, 0.06)); overflow: hidden; }' +
 			' .hw-omci-inst:last-child { margin-bottom: 0; }' +
 			' .hw-omci-inst .hw-kv-grid { display: flex; flex-direction: column; width: 100%; min-width: 0; max-width: 100%; gap: 4px; }' +
 			' .hw-card.wide .hw-omci-inst .hw-kv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 4px 28px; width: 100%; }' +
@@ -277,9 +277,9 @@ return view.extend({
 			' .hw-chart-metrics { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }' +
 			' .hw-chart-val { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 1.15em; font-weight: 700; line-height: 1.2; transition: color 0.3s ease; }' +
 			' .hw-chart-submetrics { display: flex; gap: 8px; font-size: 0.72em; opacity: 0.65; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; flex-wrap: wrap; }' +
-			' .hw-range-btn-group { display: inline-flex; gap: 3px; background: rgba(0, 0, 0, 0.25); padding: 2px 3px; border-radius: 6px; border: 1px solid var(--border-color, rgba(128, 128, 128, 0.2)); margin-top: 5px; }' +
-			' .hw-range-btn { padding: 2px 8px; font-size: 0.74em; font-weight: 600; line-height: 1.3; border: none; background: transparent; color: var(--text-color, #ccc); opacity: 0.75; border-radius: 4px; cursor: pointer; transition: all 0.15s ease; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }' +
-			' .hw-range-btn:hover { background: rgba(255, 255, 255, 0.12); opacity: 1; color: #fff; }' +
+			' .hw-range-btn-group { display: inline-flex; gap: 3px; background: var(--background-color-medium, rgba(128, 128, 128, 0.12)); padding: 2px 3px; border-radius: 6px; border: 1px solid var(--border-color, rgba(128, 128, 128, 0.2)); margin-top: 5px; }' +
+			' .hw-range-btn { padding: 2px 8px; font-size: 0.74em; font-weight: 600; line-height: 1.3; border: none; background: transparent; color: var(--text-color, inherit); opacity: 0.75; border-radius: 4px; cursor: pointer; transition: all 0.15s ease; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }' +
+			' .hw-range-btn:hover { background: rgba(128, 128, 128, 0.18); opacity: 1; color: var(--text-color, inherit); }' +
 			' .hw-range-btn.active { background: #0288d1; color: #ffffff; opacity: 1; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2); }' +
 			' .hw-card h3 { margin: 0 0 6px 0; min-height: 24px; line-height: 1.3; font-size: 1.00em; color: var(--text-color, inherit); opacity: 0.85; text-transform: uppercase; letter-spacing: 0.8px; text-align: center; word-break: break-word; font-weight: 700; }' +
 			' .hw-card-sub { margin: 0 0 14px 0; font-size: 0.72em; opacity: 0.62; text-align: center; line-height: 1.3; word-break: break-word; min-width: 0; }' +
@@ -753,10 +753,10 @@ return view.extend({
 
 		var renderAllCharts = function(statusData) {
 			var th = resolveThresholds(statusData);
-			renderChart(rxChart, chartHistories.rx, th.rx_low_alarm, th.rx_high_alarm);
-			renderChart(txChart, chartHistories.tx, th.tx_low_alarm, th.tx_high_alarm);
-			renderChart(tempChart, chartHistories.temp, th.temp_low_alarm, th.temp_high_alarm);
-			renderChart(biasChart, chartHistories.bias, th.bias_low_alarm, th.bias_high_alarm);
+			renderChart(rxChart, chartHistories.rx, th.rx_low_alarm, th.rx_high_alarm, th.rx_low_warn, th.rx_high_warn);
+			renderChart(txChart, chartHistories.tx, th.tx_low_alarm, th.tx_high_alarm, th.tx_low_warn, th.tx_high_warn);
+			renderChart(tempChart, chartHistories.temp, th.temp_low_alarm, th.temp_high_alarm, th.temp_low_warn, th.temp_high_warn);
+			renderChart(biasChart, chartHistories.bias, th.bias_low_alarm, th.bias_high_alarm, th.bias_low_warn, th.bias_high_warn);
 		};
 
 		var createChartCard = function(key, title, unit, color, minFixed, maxFixed, subtitle, tooltip) {
@@ -841,7 +841,7 @@ return view.extend({
 				if (chartObj.hoveredDot !== nearest) {
 					chartObj.hoveredDot = nearest;
 					if (chartObj.lastArgs) {
-						renderChart(chartObj, chartObj.lastArgs.dataHistory, chartObj.lastArgs.thLo, chartObj.lastArgs.thHi);
+						renderChart(chartObj, chartObj.lastArgs.dataHistory, chartObj.lastArgs.thLo, chartObj.lastArgs.thHi, chartObj.lastArgs.warnLo, chartObj.lastArgs.warnHi);
 					}
 				}
 			});
@@ -850,7 +850,7 @@ return view.extend({
 				if (chartObj.hoveredDot) {
 					chartObj.hoveredDot = null;
 					if (chartObj.lastArgs) {
-						renderChart(chartObj, chartObj.lastArgs.dataHistory, chartObj.lastArgs.thLo, chartObj.lastArgs.thHi);
+						renderChart(chartObj, chartObj.lastArgs.dataHistory, chartObj.lastArgs.thLo, chartObj.lastArgs.thHi, chartObj.lastArgs.warnLo, chartObj.lastArgs.warnHi);
 					}
 				}
 			});
@@ -1254,8 +1254,8 @@ return view.extend({
 		}
 
 		/* ---------------- Time-series Canvas Renderer (Grafana Style) --- */
-		var renderChart = function(chartObj, dataHistory, thLo, thHi) {
-			chartObj.lastArgs = { dataHistory: dataHistory, thLo: thLo, thHi: thHi };
+		var renderChart = function(chartObj, dataHistory, thLo, thHi, warnLo, warnHi) {
+			chartObj.lastArgs = { dataHistory: dataHistory, thLo: thLo, thHi: thHi, warnLo: warnLo, warnHi: warnHi };
 			var canvas = chartObj.canvas;
 			if (!canvas || !canvas.getContext) return;
 			var ctx = canvas.getContext('2d');
@@ -1287,8 +1287,23 @@ return view.extend({
 				return;
 			}
 
-			// Dark plot background (Grafana style)
-			ctx.fillStyle = 'rgba(0, 0, 0, 0.16)';
+			// Detect theme lightness
+			var isDark = true;
+			try {
+				var bodyBg = window.getComputedStyle(document.body).backgroundColor;
+				var m = bodyBg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+				if (m) {
+					var lum = (0.299 * parseInt(m[1], 10) + 0.587 * parseInt(m[2], 10) + 0.114 * parseInt(m[3], 10));
+					isDark = (lum < 130);
+				} else {
+					isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+				}
+			} catch(e) {
+				isDark = true;
+			}
+
+			// Dark/Light plot background
+			ctx.fillStyle = isDark ? 'rgba(0, 0, 0, 0.22)' : 'rgba(0, 0, 0, 0.03)';
 			ctx.fillRect(padL, padT, plotW, plotH);
 
 			// Active Selected Time Window (1h, 6h, 12h, 24h)
@@ -1319,7 +1334,7 @@ return view.extend({
 				if (minEl) minEl.textContent = 'Min: --';
 				if (maxEl) maxEl.textContent = 'Max: --';
 				if (avgEl) avgEl.textContent = 'Avg: --';
-				ctx.fillStyle = 'rgba(128,128,128,0.4)';
+				ctx.fillStyle = isDark ? 'rgba(255, 255, 255, 0.40)' : 'rgba(0, 0, 0, 0.45)';
 				ctx.font = '12px system-ui, sans-serif';
 				ctx.textAlign = 'center';
 				ctx.fillText(isTxChart ? _('Laser Off (Transmitter Inactive)') : _('Waiting for telemetry samples...'), padL + plotW / 2, padT + plotH / 2);
@@ -1353,7 +1368,7 @@ return view.extend({
 
 			var latest = validSamples[validSamples.length - 1].val;
 			var isLatestAlarm = ((thLo != null && latest < thLo) || (thHi != null && latest > thHi));
-			var isLatestWarn = (!isLatestAlarm && ((thLo != null && latest < thLo + 1.0) || (thHi != null && latest > thHi - 1.0)));
+			var isLatestWarn = (!isLatestAlarm && ((warnLo != null && latest < warnLo) || (warnHi != null && latest > warnHi)));
 			var headerColor = isLatestAlarm ? '#ff5252' : (isLatestWarn ? '#ffb300' : chartObj.color);
 
 			if (curEl) {
@@ -1369,40 +1384,75 @@ return view.extend({
 			if (maxEl) maxEl.textContent = 'Max: ' + maxVal.toFixed(1);
 			if (avgEl) avgEl.textContent = 'Avg: ' + avgValNum.toFixed(1);
 
-			// Draw subtle threshold warning/alarm bands (Grafana style)
-			if (thHi != null && isFinite(thHi) && thHi <= yMax) {
-				var tHiY = padT + plotH * (1 - (thHi - yMin) / (yMax - yMin));
-				var bandH = Math.max(0, tHiY - padT);
-				if (bandH > 0) {
-					ctx.fillStyle = 'rgba(255, 82, 82, 0.08)';
-					ctx.fillRect(padL, padT, plotW, bandH);
+			// Draw full Grafana Green, Yellow, and Red threshold background area bands
+			var drawBand = function(bLo, bHi, fillColor, borderColor) {
+				var effectiveLo = (bLo == null) ? yMin : Math.max(yMin, Math.min(yMax, bLo));
+				var effectiveHi = (bHi == null) ? yMax : Math.max(yMin, Math.min(yMax, bHi));
+				if (effectiveHi <= effectiveLo) return;
+
+				var yTop = padT + plotH * (1 - (effectiveHi - yMin) / (yMax - yMin));
+				var yBottom = padT + plotH * (1 - (effectiveLo - yMin) / (yMax - yMin));
+				var bHeight = yBottom - yTop;
+
+				if (bHeight > 0 && fillColor) {
+					ctx.fillStyle = fillColor;
+					ctx.fillRect(padL, yTop, plotW, bHeight);
 				}
-				ctx.strokeStyle = 'rgba(255, 82, 82, 0.35)';
-				ctx.lineWidth = 1;
-				ctx.beginPath();
-				ctx.moveTo(padL, tHiY);
-				ctx.lineTo(padL + plotW, tHiY);
-				ctx.stroke();
+
+				if (borderColor) {
+					ctx.save();
+					ctx.strokeStyle = borderColor;
+					ctx.lineWidth = 1;
+					ctx.setLineDash([3, 3]);
+					if (bHi != null && isFinite(bHi) && bHi >= yMin && bHi <= yMax) {
+						ctx.beginPath();
+						ctx.moveTo(padL, yTop);
+						ctx.lineTo(padL + plotW, yTop);
+						ctx.stroke();
+					}
+					if (bLo != null && isFinite(bLo) && bLo >= yMin && bLo <= yMax) {
+						ctx.beginPath();
+						ctx.moveTo(padL, yBottom);
+						ctx.lineTo(padL + plotW, yBottom);
+						ctx.stroke();
+					}
+					ctx.restore();
+				}
+			};
+
+			var RED_BG   = isDark ? 'rgba(255, 82, 82, 0.10)' : 'rgba(255, 82, 82, 0.12)';
+			var RED_LINE = isDark ? 'rgba(255, 82, 82, 0.40)' : 'rgba(255, 82, 82, 0.55)';
+			var YEL_BG   = isDark ? 'rgba(255, 179, 0, 0.08)' : 'rgba(255, 179, 0, 0.11)';
+			var YEL_LINE = isDark ? 'rgba(255, 179, 0, 0.35)' : 'rgba(255, 179, 0, 0.50)';
+			var GRN_BG   = isDark ? 'rgba(76, 175, 80, 0.06)' : 'rgba(76, 175, 80, 0.09)';
+
+			// 1. Green Optimal / Normal operating range
+			var optLo = (warnLo != null && isFinite(warnLo)) ? warnLo : thLo;
+			var optHi = (warnHi != null && isFinite(warnHi)) ? warnHi : thHi;
+			if (optLo != null || optHi != null) {
+				drawBand(optLo, optHi, GRN_BG, null);
 			}
-			if (thLo != null && isFinite(thLo) && thLo >= yMin) {
-				var tLoY = padT + plotH * (1 - (thLo - yMin) / (yMax - yMin));
-				var bBandH = Math.max(0, (padT + plotH) - tLoY);
-				if (bBandH > 0) {
-					ctx.fillStyle = 'rgba(255, 82, 82, 0.08)';
-					ctx.fillRect(padL, tLoY, plotW, bBandH);
-				}
-				ctx.strokeStyle = 'rgba(255, 82, 82, 0.35)';
-				ctx.lineWidth = 1;
-				ctx.beginPath();
-				ctx.moveTo(padL, tLoY);
-				ctx.lineTo(padL + plotW, tLoY);
-				ctx.stroke();
+
+			// 2. Yellow Warning margin bands
+			if (thLo != null && warnLo != null && warnLo > thLo) {
+				drawBand(thLo, warnLo, YEL_BG, YEL_LINE);
+			}
+			if (thHi != null && warnHi != null && thHi > warnHi) {
+				drawBand(warnHi, thHi, YEL_BG, YEL_LINE);
+			}
+
+			// 3. Red Alarm danger bands
+			if (thLo != null && isFinite(thLo)) {
+				drawBand(yMin, thLo, RED_BG, RED_LINE);
+			}
+			if (thHi != null && isFinite(thHi)) {
+				drawBand(thHi, yMax, RED_BG, RED_LINE);
 			}
 
 			// Draw Horizontal Grid lines & Y labels
-			ctx.strokeStyle = 'rgba(128, 128, 128, 0.12)';
+			ctx.strokeStyle = isDark ? 'rgba(255, 255, 255, 0.07)' : 'rgba(0, 0, 0, 0.07)';
 			ctx.lineWidth = 1;
-			ctx.fillStyle = 'rgba(128, 128, 128, 0.70)';
+			ctx.fillStyle = isDark ? 'rgba(255, 255, 255, 0.65)' : 'rgba(0, 0, 0, 0.65)';
 			ctx.font = '9px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
 			ctx.textAlign = 'right';
 
@@ -1418,34 +1468,26 @@ return view.extend({
 			}
 
 			// Configure time subdivisions based on selected window
-			var numVerticalLines, labelStep, dotIntervalMs;
+			var numVerticalLines, labelStep;
 			if (WINDOW_MS <= 3600 * 1000) {
-				// 1 Hour window: 6 divisions (every 10 min)
 				numVerticalLines = 6;
 				labelStep = (plotW < 450) ? 2 : 1;
-				dotIntervalMs = 5 * 60 * 1000; // dot every 5 mins
 			} else if (WINDOW_MS <= 6 * 3600 * 1000) {
-				// 6 Hours window: 6 divisions (every 1 hour)
 				numVerticalLines = 6;
 				labelStep = (plotW < 450) ? 2 : 1;
-				dotIntervalMs = 15 * 60 * 1000; // dot every 15 mins
 			} else if (WINDOW_MS <= 12 * 3600 * 1000) {
-				// 12 Hours window: 12 divisions (every 1 hour)
 				numVerticalLines = 12;
 				labelStep = (plotW < 500) ? 3 : 2;
-				dotIntervalMs = 30 * 60 * 1000; // dot every 30 mins
 			} else {
-				// 24 Hours window: 24 divisions (every 1 hour)
 				numVerticalLines = 24;
 				labelStep = (plotW < 520) ? 6 : (plotW < 750 ? 4 : 2);
-				dotIntervalMs = 30 * 60 * 1000; // dot every 30 mins
 			}
 
 			// Draw Vertical Lines
 			ctx.lineWidth = 1;
 			for (var vl = 0; vl <= numVerticalLines; vl++) {
 				var vx = padL + (plotW * vl / numVerticalLines);
-				ctx.strokeStyle = 'rgba(128, 128, 128, 0.10)';
+				ctx.strokeStyle = isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.06)';
 				ctx.beginPath();
 				ctx.moveTo(vx, padT);
 				ctx.lineTo(vx, padT + plotH);
@@ -1453,6 +1495,7 @@ return view.extend({
 			}
 
 			// Draw X-axis Timestamps with zero truncation
+			ctx.fillStyle = isDark ? 'rgba(255, 255, 255, 0.65)' : 'rgba(0, 0, 0, 0.65)';
 			for (var ls = 0; ls <= numVerticalLines; ls += labelStep) {
 				var lx = padL + (plotW * ls / numVerticalLines);
 				var curT = minTime + (WINDOW_MS * ls / numVerticalLines);
@@ -1572,7 +1615,7 @@ return view.extend({
 
 				// Vertical dashed crosshair line
 				ctx.save();
-				ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+				ctx.strokeStyle = isDark ? 'rgba(255, 255, 255, 0.35)' : 'rgba(0, 0, 0, 0.30)';
 				ctx.lineWidth = 1;
 				ctx.setLineDash([3, 3]);
 				ctx.beginPath();
@@ -1584,7 +1627,7 @@ return view.extend({
 				// Halo / Highlight on the hovered dot
 				ctx.beginPath();
 				ctx.arc(hDot.x, hDot.y, 5.5, 0, 2 * Math.PI);
-				ctx.fillStyle = '#ffffff';
+				ctx.fillStyle = isDark ? '#ffffff' : '#333333';
 				ctx.fill();
 
 				ctx.beginPath();
@@ -1617,7 +1660,7 @@ return view.extend({
 				var tipY = Math.max(padT + 4, Math.min(padT + plotH - tipH - 4, hDot.y - tipH / 2));
 
 				// Tooltip bubble background
-				ctx.fillStyle = 'rgba(20, 22, 26, 0.95)';
+				ctx.fillStyle = isDark ? 'rgba(20, 22, 26, 0.95)' : 'rgba(255, 255, 255, 0.96)';
 				ctx.strokeStyle = hDot.alarm ? '#ff5252' : chartObj.color;
 				ctx.lineWidth = 1;
 				ctx.beginPath();
@@ -1630,7 +1673,7 @@ return view.extend({
 				ctx.stroke();
 
 				// Tooltip text
-				ctx.fillStyle = '#ffffff';
+				ctx.fillStyle = isDark ? '#ffffff' : '#111827';
 				ctx.textAlign = 'left';
 				ctx.textBaseline = 'middle';
 				ctx.fillText(tipText, tipX + 8, tipY + tipH / 2);
