@@ -1163,12 +1163,23 @@ return view.extend({
 						var validLines = (inst.lines || []).filter(function(line) {
 							return line && !/^0x0+$/i.test(line.trim()) && line.trim() !== '0x000000';
 						});
-						if (validLines.length)
+						if (validLines.length) {
 							kids.push(E('div', { class: 'hw-kv-grid' }, validLines.map(function(line) {
-								return E('div', { class: 'hw-kv' }, [
-									E('span', { class: 'hw-kv-v' }, line)
-								]);
+								var colonIdx = line.indexOf(':');
+								if (colonIdx > 0) {
+									var lKey = line.substring(0, colonIdx).trim();
+									var lVal = line.substring(colonIdx + 1).trim();
+									return E('div', { class: 'hw-kv' }, [
+										E('span', { class: 'hw-kv-k' }, omciKeyLabel(lKey)),
+										E('span', { class: 'hw-kv-v' }, lVal || '--')
+									]);
+								} else {
+									return E('div', { class: 'hw-kv' }, [
+										E('span', { class: 'hw-kv-v', style: 'width: 100%; text-align: left;' }, line)
+									]);
+								}
 							})));
+						}
 						return E('div', { class: 'hw-omci-inst' }, kids);
 					});
 				}
@@ -1520,7 +1531,7 @@ return view.extend({
 				ctx.stroke();
 			}
 
-			// 3. Draw consistent 30-minute interval dots (and current endpoint dot)
+			// 3. Draw consistent 30-minute interval dots
 			var DOT_INTERVAL_MS = 30 * 60 * 1000;
 			var firstSlot = Math.ceil(minTime / DOT_INTERVAL_MS) * DOT_INTERVAL_MS;
 			var lastSlot = Math.floor(maxTime / DOT_INTERVAL_MS) * DOT_INTERVAL_MS;
@@ -1529,6 +1540,7 @@ return view.extend({
 			for (var slotTime = firstSlot; slotTime <= lastSlot; slotTime += DOT_INTERVAL_MS) {
 				var bestPt = null;
 				var minDiff = 15 * 60 * 1000; // within 15 mins of slot
+
 				for (var s = 0; s < validSamples.length; s++) {
 					var diff = Math.abs(validSamples[s].time - slotTime);
 					if (diff < minDiff) {
@@ -1536,32 +1548,36 @@ return view.extend({
 						bestPt = validSamples[s];
 					}
 				}
+
 				if (bestPt) {
-					var dotX = padL + Math.max(0, Math.min(1, (bestPt.time - minTime) / WINDOW_MS)) * plotW;
+					// Position dot exactly on the 30-minute grid mark
+					var dotX = padL + Math.max(0, Math.min(1, (slotTime - minTime) / WINDOW_MS)) * plotW;
 					var dotY = padT + plotH * (1 - (bestPt.val - yMin) / (yMax - yMin));
 					var isAlarm = ((thLo != null && bestPt.val < thLo) || (thHi != null && bestPt.val > thHi));
 					renderedDots.push({
 						x: dotX,
 						y: dotY,
-						time: bestPt.time,
+						time: slotTime,
+						actualTime: bestPt.time,
 						val: bestPt.val,
 						alarm: isAlarm
 					});
 				}
 			}
 
-			// Include latest live point if available
+			// Include latest live point only if it is at least 8 minutes away from the last 30-min slot
 			if (validSamples.length > 0) {
 				var lastSample = validSamples[validSamples.length - 1];
 				var lastX = padL + Math.max(0, Math.min(1, (lastSample.time - minTime) / WINDOW_MS)) * plotW;
 				var lastY = padT + plotH * (1 - (lastSample.val - yMin) / (yMax - yMin));
 				var lastAlarm = ((thLo != null && lastSample.val < thLo) || (thHi != null && lastSample.val > thHi));
-				var isDuplicate = renderedDots.some(function(rd) { return Math.abs(rd.x - lastX) < 4; });
-				if (!isDuplicate) {
+				var tooClose = renderedDots.some(function(rd) { return Math.abs(rd.x - lastX) < 14; });
+				if (!tooClose) {
 					renderedDots.push({
 						x: lastX,
 						y: lastY,
 						time: lastSample.time,
+						actualTime: lastSample.time,
 						val: lastSample.val,
 						alarm: lastAlarm
 					});
