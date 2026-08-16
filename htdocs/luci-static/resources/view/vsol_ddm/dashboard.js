@@ -254,18 +254,14 @@ return view.extend({
 			' .hw-actionbar-title { font-size: 0.95em; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; opacity: 0.85; }' +
 			' .hw-actionbar-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }' +
 			' .hw-actionbar-note { font-size: 0.72em; opacity: 0.65; width: 100%; margin: 0; }' +
-			/* OMCI section: its own wrapping row of cards inside the flex dashboard. */
 			' .hw-omci-wrap { flex: 1 1 100%; min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; align-items: stretch; gap: 20px; }' +
-			' .hw-omci-inst { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; margin: 0 0 12px 0; padding: 10px 12px; border: 1px solid var(--border-color, rgba(128,128,128,0.15)); border-radius: 8px; }' +
+			' .hw-omci-inst { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; margin: 0 0 12px 0; padding: 10px 12px; border: 1px solid var(--border-color, rgba(128,128,128,0.15)); border-radius: 8px; overflow: hidden; }' +
 			' .hw-omci-inst:last-child { margin-bottom: 0; }' +
-/* Let a field name take its natural width rather than being squeezed to a
-			   few characters by a long value - OltVendorId was being crushed into a
-			   59px column and wrapping onto three lines. Capped at 60% so the
-			   pathological ME 171 names cannot swallow the row; those still wrap, but
-			   only at the camel-case break points. */
-			' .hw-omci-inst .hw-kv-k { flex: 0 0 max-content; max-width: 60%; }' +
-			' .hw-omci-inst .hw-kv-v { min-width: 0; overflow-wrap: anywhere; }' +
-						' .hw-omci-eid { font-size: 0.75em; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; opacity: 0.8; margin: 0 0 8px 0; }' +
+			' .hw-omci-inst .hw-kv-grid { display: flex; flex-direction: column; width: 100%; min-width: 0; max-width: 100%; gap: 3px; }' +
+			' .hw-omci-inst .hw-kv { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; margin-bottom: 3px; }' +
+			' .hw-omci-inst .hw-kv-k { flex: 0 1 auto; max-width: 48%; min-width: 0; word-break: break-word; overflow-wrap: anywhere; }' +
+			' .hw-omci-inst .hw-kv-v { flex: 1 1 auto; min-width: 0; max-width: 52%; word-break: break-word; overflow-wrap: anywhere; text-align: right; box-sizing: border-box; }' +
+			' .hw-omci-eid { font-size: 0.75em; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; opacity: 0.8; margin: 0 0 8px 0; }' +
 			' .hw-omci-tbl { width: 100%; min-width: 0; border-collapse: collapse; font-size: 0.76em; }' +
 			' .hw-omci-tbl th, .hw-omci-tbl td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border-color, rgba(128,128,128,0.12)); white-space: nowrap; }' +
 			' .hw-omci-tbl th { font-weight: 700; opacity: 0.7; }' +
@@ -337,10 +333,10 @@ return view.extend({
 			'   .hw-omci-tbl, .hw-omci-tbl tbody, .hw-omci-tbl tr, .hw-omci-tbl td { display: block; width: 100%; max-width: 100%; box-sizing: border-box; }' +
 			'   .hw-omci-tbl tr { padding: 6px 0; border-bottom: 1px solid var(--border-color, rgba(128,128,128,0.18)); }' +
 			'   .hw-omci-tbl tr:last-child { border-bottom: 0; }' +
-			'   .hw-omci-tbl td { display: flex; justify-content: space-between; align-items: baseline; gap: 12px;' +
-			'     border-bottom: 0; padding: 2px 0; white-space: normal; overflow-wrap: anywhere; text-align: right; }' +
-			'   .hw-omci-tbl td::before { content: attr(data-label); flex: 0 0 auto; font-weight: 700; opacity: 0.65;' +
-			'     text-align: left; font-family: system-ui, -apple-system, sans-serif; }' +
+			'   .hw-omci-tbl td { display: flex; justify-content: space-between; align-items: baseline; gap: 8px;' +
+			'     border-bottom: 0; padding: 2px 0; white-space: normal; overflow-wrap: anywhere; word-break: break-word; text-align: right; width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }' +
+			'   .hw-omci-tbl td::before { content: attr(data-label); flex: 0 1 auto; max-width: 45%; min-width: 0; font-weight: 700; opacity: 0.65;' +
+			'     text-align: left; font-family: system-ui, -apple-system, sans-serif; word-break: break-word; overflow-wrap: anywhere; }' +
 			'   .hw-dial { transform: scale(0.9); }' +
 			'   .hw-dial-line { font-size: 1.05em; }' +
 			'   .hw-dial-single { font-size: 1.05em; }' +
