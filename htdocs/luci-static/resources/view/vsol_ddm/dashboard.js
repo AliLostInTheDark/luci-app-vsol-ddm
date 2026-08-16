@@ -323,6 +323,17 @@ return view.extend({
 			'   .hw-omci-inst { padding: 8px 10px; }' +
 			'   .hw-omci-tbl { font-size: 0.70em; }' +
 			'   .hw-omci-tbl th, .hw-omci-tbl td { padding: 3px 6px; }' +
+			/* Stack the rule table: the header row goes away and every cell
+			   becomes a label/value line, so nothing has to be scrolled to. */
+			'   .hw-table-scroll { overflow-x: visible; }' +
+			'   .hw-omci-tbl thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }' +
+			'   .hw-omci-tbl, .hw-omci-tbl tbody, .hw-omci-tbl tr, .hw-omci-tbl td { display: block; width: 100%; max-width: 100%; box-sizing: border-box; }' +
+			'   .hw-omci-tbl tr { padding: 6px 0; border-bottom: 1px solid var(--border-color, rgba(128,128,128,0.18)); }' +
+			'   .hw-omci-tbl tr:last-child { border-bottom: 0; }' +
+			'   .hw-omci-tbl td { display: flex; justify-content: space-between; align-items: baseline; gap: 12px;' +
+			'     border-bottom: 0; padding: 2px 0; white-space: normal; overflow-wrap: anywhere; text-align: right; }' +
+			'   .hw-omci-tbl td::before { content: attr(data-label); flex: 0 0 auto; font-weight: 700; opacity: 0.65;' +
+			'     text-align: left; font-family: system-ui, -apple-system, sans-serif; }' +
 			'   .hw-dial { transform: scale(0.9); }' +
 			'   .hw-dial-line { font-size: 1.05em; }' +
 			'   .hw-dial-single { font-size: 1.05em; }' +
@@ -1024,24 +1035,34 @@ return view.extend({
 			return E('div', { class: 'hw-kv-grid' }, rows);
 		};
 
+		/* Five columns of nowrap VLAN tuples need roughly 815px. On a phone that
+		 * left under two columns visible with 524px hidden behind a scroll that
+		 * gave no sign it was there, so the rule was effectively unreadable.
+		 *
+		 * Each cell therefore carries its column name in data-label, and below
+		 * the mobile breakpoint the stylesheet drops the header row and restyles
+		 * the cells as stacked label/value pairs. Same markup, no duplicate DOM,
+		 * and the table stays a table for screen readers and for wide screens. */
+		var OMCI_RULE_COLS = [
+			{ key: 'index',           label: _('#') },
+			{ key: 'filter_outer',    label: _('Filter Outer') },
+			{ key: 'filter_inner',    label: _('Filter Inner') },
+			{ key: 'treatment_outer', label: _('Treatment Outer') },
+			{ key: 'treatment_inner', label: _('Treatment Inner') }
+		];
+
 		var omciRulesTable = function(rules) {
 			return E('div', { class: 'hw-table-scroll' }, [
 				E('table', { class: 'hw-omci-tbl' }, [
-					E('thead', {}, [E('tr', {}, [
-						E('th', {}, _('#')),
-						E('th', {}, _('Filter Outer')),
-						E('th', {}, _('Filter Inner')),
-						E('th', {}, _('Treatment Outer')),
-						E('th', {}, _('Treatment Inner'))
-					])]),
+					E('thead', {}, [E('tr', {}, OMCI_RULE_COLS.map(function(c) {
+						return E('th', {}, c.label);
+					}))]),
 					E('tbody', {}, rules.map(function(r) {
-						return E('tr', {}, [
-							E('td', { class: 'mono' }, r.index != null ? String(r.index) : '--'),
-							E('td', { class: 'mono' }, r.filter_outer || '--'),
-							E('td', { class: 'mono' }, r.filter_inner || '--'),
-							E('td', { class: 'mono' }, r.treatment_outer || '--'),
-							E('td', { class: 'mono' }, r.treatment_inner || '--')
-						]);
+						return E('tr', {}, OMCI_RULE_COLS.map(function(c) {
+							var v = r[c.key];
+							if (v == null || v === '') v = '--';
+							return E('td', { class: 'mono', 'data-label': c.label }, String(v));
+						}));
 					}))
 				])
 			]);
