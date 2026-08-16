@@ -258,7 +258,14 @@ return view.extend({
 			' .hw-omci-wrap { flex: 1 1 100%; min-width: 0; max-width: 100%; display: flex; flex-wrap: wrap; align-items: stretch; gap: 20px; }' +
 			' .hw-omci-inst { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; margin: 0 0 12px 0; padding: 10px 12px; border: 1px solid var(--border-color, rgba(128,128,128,0.15)); border-radius: 8px; }' +
 			' .hw-omci-inst:last-child { margin-bottom: 0; }' +
-			' .hw-omci-eid { font-size: 0.75em; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; opacity: 0.8; margin: 0 0 8px 0; }' +
+/* Let a field name take its natural width rather than being squeezed to a
+			   few characters by a long value - OltVendorId was being crushed into a
+			   59px column and wrapping onto three lines. Capped at 60% so the
+			   pathological ME 171 names cannot swallow the row; those still wrap, but
+			   only at the camel-case break points. */
+			' .hw-omci-inst .hw-kv-k { flex: 0 0 max-content; max-width: 60%; }' +
+			' .hw-omci-inst .hw-kv-v { min-width: 0; overflow-wrap: anywhere; }' +
+						' .hw-omci-eid { font-size: 0.75em; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; opacity: 0.8; margin: 0 0 8px 0; }' +
 			' .hw-omci-tbl { width: 100%; min-width: 0; border-collapse: collapse; font-size: 0.76em; }' +
 			' .hw-omci-tbl th, .hw-omci-tbl td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--border-color, rgba(128,128,128,0.12)); white-space: nowrap; }' +
 			' .hw-omci-tbl th { font-weight: 700; opacity: 0.7; }' +
@@ -325,7 +332,7 @@ return view.extend({
 			'   .hw-omci-tbl th, .hw-omci-tbl td { padding: 3px 6px; }' +
 			/* Stack the rule table: the header row goes away and every cell
 			   becomes a label/value line, so nothing has to be scrolled to. */
-			'   .hw-table-scroll { overflow-x: visible; }' +
+			'   .hw-omci-inst .hw-table-scroll { overflow-x: visible; }' +
 			'   .hw-omci-tbl thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }' +
 			'   .hw-omci-tbl, .hw-omci-tbl tbody, .hw-omci-tbl tr, .hw-omci-tbl td { display: block; width: 100%; max-width: 100%; box-sizing: border-box; }' +
 			'   .hw-omci-tbl tr { padding: 6px 0; border-bottom: 1px solid var(--border-color, rgba(128,128,128,0.18)); }' +
@@ -998,6 +1005,27 @@ return view.extend({
 		 * badge that could be backwards. */
 		var OMCI_STATE_LEGEND = _('AdminState: 0 = unlocked, 1 = locked. OpState: 0 = enabled, 1 = disabled (ITU-T G.988). This firmware does not report these consistently, so raw values are shown.');
 
+		/* OMCI field names arrive as camel-case run-ons - OltVendorId, and in
+		 * ME 171 ReceivedFrameVlanTagOperTableMaxSize, which measures 228px as a
+		 * single unbreakable token inside a 291px row. Left to the browser these
+		 * either overflow or, under overflow-wrap:anywhere, split at whatever
+		 * character happens to land on the boundary: OltVendorId rendered as
+		 * "OltVendo / rId" on a phone.
+		 *
+		 * A <wbr> at each camel-case boundary offers the browser somewhere
+		 * sensible to break, so the label wraps as Olt-Vendor-Id and stays
+		 * readable. No lookbehind here: it is unsupported in older mobile
+		 * WebKit and would throw while parsing the view. */
+		var omciKeyLabel = function(key) {
+			var parts = String(key).replace(/([a-z0-9])([A-Z])/g, '$1\u0000$2').split('\u0000');
+			var out = [];
+			parts.forEach(function(part, i) {
+				if (i) out.push(E('wbr'));
+				out.push(document.createTextNode(part));
+			});
+			return out;
+		};
+
 		var omciScalarGrid = function(inst) {
 			var rows = [];
 			for (var k in inst) {
@@ -1028,7 +1056,7 @@ return view.extend({
 				}
 
 				rows.push(E('div', { class: 'hw-kv' }, [
-					E('span', { class: 'hw-kv-k' }, k),
+					E('span', { class: 'hw-kv-k' }, omciKeyLabel(k)),
 					E('span', { class: 'hw-kv-v' }, String(v))
 				]));
 			}
