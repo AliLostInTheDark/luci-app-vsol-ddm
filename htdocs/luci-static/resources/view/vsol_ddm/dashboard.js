@@ -1531,56 +1531,26 @@ return view.extend({
 				ctx.stroke();
 			}
 
-			// 3. Draw consistent 30-minute interval dots
+			// 3. Draw consistent sample dots (spaced 30 mins apart along the recorded line)
 			var DOT_INTERVAL_MS = 30 * 60 * 1000;
-			var firstSlot = Math.ceil(minTime / DOT_INTERVAL_MS) * DOT_INTERVAL_MS;
-			var lastSlot = Math.floor(maxTime / DOT_INTERVAL_MS) * DOT_INTERVAL_MS;
 			var renderedDots = [];
+			var lastDotTime = -Infinity;
 
-			for (var slotTime = firstSlot; slotTime <= lastSlot; slotTime += DOT_INTERVAL_MS) {
-				var bestPt = null;
-				var minDiff = 15 * 60 * 1000; // within 15 mins of slot
+			for (var d = 0; d < validPoints.length; d++) {
+				var pt = validPoints[d];
+				var isFirst = (d === 0);
+				var isLast = (d === validPoints.length - 1);
+				var isInterval = (pt.time - lastDotTime >= DOT_INTERVAL_MS - 60000);
 
-				for (var s = 0; s < validSamples.length; s++) {
-					var diff = Math.abs(validSamples[s].time - slotTime);
-					if (diff < minDiff) {
-						minDiff = diff;
-						bestPt = validSamples[s];
-					}
-				}
-
-				if (bestPt) {
-					// Position dot exactly on the 30-minute grid mark
-					var dotX = padL + Math.max(0, Math.min(1, (slotTime - minTime) / WINDOW_MS)) * plotW;
-					var dotY = padT + plotH * (1 - (bestPt.val - yMin) / (yMax - yMin));
-					var isAlarm = ((thLo != null && bestPt.val < thLo) || (thHi != null && bestPt.val > thHi));
+				if (isFirst || isInterval || (isLast && (pt.time - lastDotTime >= 10 * 60 * 1000))) {
 					renderedDots.push({
-						x: dotX,
-						y: dotY,
-						time: slotTime,
-						actualTime: bestPt.time,
-						val: bestPt.val,
-						alarm: isAlarm
+						x: pt.x,
+						y: pt.y,
+						time: pt.time,
+						val: pt.val,
+						alarm: pt.alarm
 					});
-				}
-			}
-
-			// Include latest live point only if it is at least 8 minutes away from the last 30-min slot
-			if (validSamples.length > 0) {
-				var lastSample = validSamples[validSamples.length - 1];
-				var lastX = padL + Math.max(0, Math.min(1, (lastSample.time - minTime) / WINDOW_MS)) * plotW;
-				var lastY = padT + plotH * (1 - (lastSample.val - yMin) / (yMax - yMin));
-				var lastAlarm = ((thLo != null && lastSample.val < thLo) || (thHi != null && lastSample.val > thHi));
-				var tooClose = renderedDots.some(function(rd) { return Math.abs(rd.x - lastX) < 14; });
-				if (!tooClose) {
-					renderedDots.push({
-						x: lastX,
-						y: lastY,
-						time: lastSample.time,
-						actualTime: lastSample.time,
-						val: lastSample.val,
-						alarm: lastAlarm
-					});
+					lastDotTime = pt.time;
 				}
 			}
 
